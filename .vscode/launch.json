@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Zaber Browser GUI",
+      "type": "python",
+      "request": "launch",
+      "program": "${workspaceFolder}/web_preview/run_web_gui.py",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

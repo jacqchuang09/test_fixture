@@ -1,0 +1,9 @@
+numpy
+xlsxwriter
+pyserial
+zaber-motion
+matplotlib
+pythonnet
+
+# futek_cli.py is included, but it also requires the FUTEK.Devices DLL/driver
+# to be installed on the computer that is connected to the load cell.

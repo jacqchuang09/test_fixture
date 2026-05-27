@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Run Zaber Browser GUI",
+      "type": "shell",
+      "command": "python3",
+      "args": [
+        "-u",
+        "web_preview/run_web_gui.py"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}
