@@ -77,10 +77,15 @@ class HardwareState:
             self.cli = None
 
         cli = ZaberCLI()
+        reason = None
         try:
             connected = cli.connect(comport) == 1
-        except Exception:
+        except Exception as exc:
             connected = False
+            reason = f"{type(exc).__name__}: {exc}"
+        if not connected and reason is None:
+            # surface the real cause that ZaberCLI.connect recorded.
+            reason = getattr(cli, "last_error", None)
 
         if connected:
             self.cli = cli
@@ -93,9 +98,10 @@ class HardwareState:
 
         self.cli = None
         self.simulated = True
+        detail = f" ({reason})" if reason else ""
         return {
             "ok": True, "connected": False, "comport": comport,
-            "message": f"Couldn't connect to a Zaber on {comport}. Try a different COM port.",
+            "message": f"Couldn't connect to a Zaber on {comport}.{detail} Try a different COM port, or close any other program using it.",
         }
 
     def move(self, comport, distance):
