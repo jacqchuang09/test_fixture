@@ -30,7 +30,7 @@ def load(test_folder):
     path = _log_path(test_folder)
     if path.is_file():
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(path.read_text(encoding="utf-8"))
             data.setdefault("runs", [])
             data.setdefault("redos", [])
             return data
@@ -41,7 +41,7 @@ def load(test_folder):
 
 def save(test_folder, log):
     try:
-        _log_path(test_folder).write_text(json.dumps(log, indent=2))
+        _log_path(test_folder).write_text(json.dumps(log, indent=2), encoding="utf-8")
     except OSError:
         pass
 

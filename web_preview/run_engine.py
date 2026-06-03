@@ -257,7 +257,7 @@ class RunEngine:
         except Exception:
             import csv
             path = fut_dir / f"Run {run_number}.csv"
-            with path.open("w", newline="") as handle:
+            with path.open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.writer(handle)
                 writer.writerow(["Index", "Load Cell", "Time"])
                 for index, force, t in readings:

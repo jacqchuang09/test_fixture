@@ -74,7 +74,7 @@ class SavedTestAnalyzer:
             test_type, readings, channel_stats,
             em_plots=(em_summary.get("plots") if em_summary else None),
             cap_runs=cap_runs,
-        ))
+        ), encoding="utf-8")
 
         summary_path = outputs.get("results_table", str(interactive_html_path))
         report_path = outputs.get("results_archive", str(interactive_html_path))
@@ -227,7 +227,7 @@ class SavedTestAnalyzer:
     def _read_fut_numeric_rows(self, path):
         if path.suffix.lower() == ".csv":
             rows = []
-            with path.open(newline="", errors="ignore") as handle:
+            with path.open(newline="", errors="ignore", encoding="utf-8") as handle:
                 reader = csv.reader(handle)
                 for row in reader:
                     rows.append([self._safe_float(cell) for cell in row])
@@ -240,7 +240,7 @@ class SavedTestAnalyzer:
         for index, path in enumerate(files, start=1):
             run_number = self._run_number(path.name, index)
             rows = []
-            with path.open(newline="", errors="ignore") as handle:
+            with path.open(newline="", errors="ignore", encoding="utf-8") as handle:
                 reader = csv.reader(handle)
                 for row_index, row in enumerate(reader):
                     numeric = [self._safe_float(cell) for cell in row]
@@ -724,24 +724,24 @@ class SavedTestAnalyzer:
                 series = self._channel_run_series(run_number, channel, cap_runs, readings)
                 title = f"Raw Signal Run #{run_number} CH{channel}"
                 (run_dir / f"Raw Signal_Run #{run_number}_CH{channel}.svg").write_text(
-                    self._simple_svg(title, series, "Capacitance (pF)"))
+                    self._simple_svg(title, series, "Capacitance (pF)"), encoding="utf-8")
         ps_root.mkdir(parents=True, exist_ok=True)
         for run_number in runs:
             (ps_root / f"PS curve all CHs number #{run_number}.svg").write_text(
                 self._ps_all_channels_svg(run_number, cap_runs, readings,
-                                          f"PS Curve All CHs - Run #{run_number}"))
+                                          f"PS Curve All CHs - Run #{run_number}"), encoding="utf-8")
         ch_per_run = self.analysis_folder / "PS curves all ch per run.svg"
         run_per_ch = self.analysis_folder / "PS curves all run per CH.svg"
-        ch_per_run.write_text(self._ps_all_channels_svg(runs[0], cap_runs, readings, "PS Curves - All CH per Run"))
-        run_per_ch.write_text(self._simple_svg("PS Curves - All Runs per CH", readings, "Pressure Sensitivity"))
+        ch_per_run.write_text(self._ps_all_channels_svg(runs[0], cap_runs, readings, "PS Curves - All CH per Run"), encoding="utf-8")
+        run_per_ch.write_text(self._simple_svg("PS Curves - All Runs per CH", readings, "Pressure Sensitivity"), encoding="utf-8")
 
         results_table = self.analysis_folder / "EB_Analysis_Results.csv"
         results_archive = self.analysis_folder / "eb_analysis_results.json"
-        results_table.write_text(self._summary_csv(channel_stats))
+        results_table.write_text(self._summary_csv(channel_stats), encoding="utf-8")
         results_archive.write_text(json.dumps({
             **self._analysis_data(readings, channel_stats),
             "report_output": report_output,
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
         return {
             "raw_signal_folder": str(raw_root),
             "ps_curve_folder": str(ps_root),
@@ -831,13 +831,13 @@ class SavedTestAnalyzer:
         failure_plot = self.analysis_folder / "Shear_Failure_Check.svg"
         results_table = self.analysis_folder / "Shear_Analysis_Results.csv"
         results_archive = self.analysis_folder / "shear_analysis_results.json"
-        failure_plot.write_text(self._simple_svg("Shear Failure Check", readings, "Force (N)"))
-        results_table.write_text(self._summary_csv(channel_stats))
+        failure_plot.write_text(self._simple_svg("Shear Failure Check", readings, "Force (N)"), encoding="utf-8")
+        results_table.write_text(self._summary_csv(channel_stats), encoding="utf-8")
         results_archive.write_text(json.dumps({
             **self._analysis_data(readings, channel_stats),
             "failure_checks": self._shear_failure_checks_tsv(),
             "report_output": report_output,
-        }, indent=2, default=str))
+        }, indent=2, default=str), encoding="utf-8")
         return {
             "shear_failure_check": str(failure_plot),
             "results_table": str(results_table),
@@ -881,18 +881,18 @@ class SavedTestAnalyzer:
         # preview fallback: lightweight SVGs + csv/json so the demo still works.
         results_table = self.analysis_folder / "Manual_Analysis_Results.csv"
         results_archive = self.analysis_folder / "manual_analysis_results.json"
-        results_table.write_text(self._manual_log_csv(points))
+        results_table.write_text(self._manual_log_csv(points), encoding="utf-8")
         cap_force = self.analysis_folder / "Manual_Cap_vs_Force.svg"
         force_time = self.analysis_folder / "Manual_Force_vs_Time.svg"
         cap_time = self.analysis_folder / "Manual_Cap_vs_Time.svg"
-        cap_force.write_text(self._manual_svg("Capacitance vs Force", points, "force", "capacitance", "Force (N)", "Capacitance (pF)"))
-        force_time.write_text(self._manual_svg("Force vs Time", points, "time", "force", "Time (s)", "Force (N)"))
-        cap_time.write_text(self._manual_svg("Capacitance vs Time", points, "time", "capacitance", "Time (s)", "Capacitance (pF)"))
+        cap_force.write_text(self._manual_svg("Capacitance vs Force", points, "force", "capacitance", "Force (N)", "Capacitance (pF)"), encoding="utf-8")
+        force_time.write_text(self._manual_svg("Force vs Time", points, "time", "force", "Time (s)", "Force (N)"), encoding="utf-8")
+        cap_time.write_text(self._manual_svg("Capacitance vs Time", points, "time", "capacitance", "Time (s)", "Capacitance (pF)"), encoding="utf-8")
         results_archive.write_text(json.dumps({
             **self._analysis_data(readings, channel_stats),
             "manual_points": points,
             "report_output": report_output,
-        }, indent=2))
+        }, indent=2), encoding="utf-8")
         return {
             "manual_cap_vs_force": str(cap_force),
             "manual_force_vs_time": str(force_time),

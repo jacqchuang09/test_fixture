@@ -434,7 +434,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def write_preview_fut(self, path, run_number):
         # force file: load cell (N) derived from the modelled pressure profile.
-        with path.open("w", newline="") as handle:
+        with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["Index", "Load Cell", "Time"])
             for index in range(self.PREVIEW_SAMPLES):
@@ -446,7 +446,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def write_preview_cap(self, path, run_number):
         # capacitance file: eight channels, each a sigmoid response vs pressure.
-        with path.open("w", newline="") as handle:
+        with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["Time", "Unused1", "Unused2", "Unused3", "Unused4", "CH1", "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8"])
             for index in range(self.PREVIEW_SAMPLES):
@@ -508,14 +508,14 @@ class Handler(SimpleHTTPRequestHandler):
         return points or [{"time": index * 0.1, "force": index * 0.2, "capacitance": 12 + index * 0.08} for index in range(25)]
 
     def write_reading_fut(self, path, readings):
-        with path.open("w", newline="") as handle:
+        with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["Index", "Load Cell", "Time"])
             for index, point in enumerate(readings, start=1):
                 writer.writerow([index, round(point["force"], 5), round(point["time"], 5)])
 
     def write_reading_cap(self, path, readings):
-        with path.open("w", newline="") as handle:
+        with path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             writer.writerow(["Time", "Unused1", "Unused2", "Unused3", "Unused4", "CH1", "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8"])
             for point in readings:
