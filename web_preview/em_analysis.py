@@ -100,6 +100,10 @@ class EMAnalysis:
             csv_files = [f for f in csv_files if _run_sort_key(f)[0] in active]
             fut_files = [f for f in fut_files if _run_sort_key(f)[0] in active]
 
+        # preserve the ACTUAL run numbers (e.g. [1, 3, 4] after a redo superseded
+        # run 2) so plots/labels/files show the real run, not a 1..N re-index.
+        self.run_numbers = [_run_sort_key(f)[0] for f in fut_files]
+
         self.cap_size = len(csv_files)
 
         if self.cap_size == 0 or len(fut_files) == 0:
@@ -284,7 +288,7 @@ class EMAnalysis:
                 ax1.plot(self.test[i][0][:, 0], self.test[i][0][:, j + 1])
                 ax1.set_ylabel("Change in CAP (pF)", fontsize=12)
                 ax1.set_xlabel("Time (s)", fontsize=12)
-                ax1.set_title(f"Raw Signal - Run #{i + 1} - CH{j + 1}", fontsize=14, fontweight="bold")
+                ax1.set_title(f"Raw Signal - Run #{self.run_numbers[i]} - CH{j + 1}", fontsize=14, fontweight="bold")
                 ax1.grid(True, alpha=0.3)
 
                 ax2.plot(self.test[i][1][:, 0], self.test[i][1][:, 1])
@@ -299,9 +303,9 @@ class EMAnalysis:
 
                 ax1.sharex(ax2)
                 plt.tight_layout()
-                run_dir = self.path / "Raw Signal" / f"Run {i + 1}"
+                run_dir = self.path / "Raw Signal" / f"Run {self.run_numbers[i]}"
                 run_dir.mkdir(parents=True, exist_ok=True)
-                filename = run_dir / f"Raw Signal_Run #{i + 1}_CH{j + 1}.svg"
+                filename = run_dir / f"Raw Signal_Run #{self.run_numbers[i]}_CH{j + 1}.svg"
                 rasterize_dense_lines(plt.gcf())
                 plt.savefig(filename, format="svg", bbox_inches="tight")
                 plt.close(fig)
@@ -394,7 +398,7 @@ class EMAnalysis:
 
                 # Plot the P.S curve + derivative for this channel.
                 ax = plt.subplot(2, 4, j + 1)
-                ax.set_title(f"Run# {i + 1} - CH {j + 1}", fontsize=12, fontweight="bold")
+                ax.set_title(f"Run# {self.run_numbers[i]} - CH {j + 1}", fontsize=12, fontweight="bold")
                 ax.plot(x_smooth, y_smooth, "-o", markersize=2, linewidth=1.5, color="tab:blue", label="CAP")
                 if locz_ij is not None:
                     ax.plot(x_smooth[locz_ij], y_smooth[locz_ij], "or", markersize=10, linewidth=2, label="Inflection Point")
@@ -421,7 +425,7 @@ class EMAnalysis:
             plt.tight_layout()
             ps_dir = self.path / "PS Curve"
             ps_dir.mkdir(parents=True, exist_ok=True)
-            filename = ps_dir / f"PS curve all CHs number #{i + 1}.svg"
+            filename = ps_dir / f"PS curve all CHs number #{self.run_numbers[i]}.svg"
             rasterize_dense_lines(plt.gcf())
             plt.savefig(filename, format="svg", bbox_inches="tight")
             plt.close(fig)
@@ -447,7 +451,7 @@ class EMAnalysis:
                 y_smooth = uniform_filter1d(y[st_pt:], size=100, mode="nearest")
 
                 axes[i].plot(x_smooth, y_smooth, "-", linewidth=2, label=f"Ch. #: {j + 1}")
-                axes[i].set_title(f"Run {i + 1}", fontsize=14, fontweight="bold")
+                axes[i].set_title(f"Run {self.run_numbers[i]}", fontsize=14, fontweight="bold")
                 axes[i].set_xlabel("Pressure (kPa)", fontsize=12)
                 axes[i].set_ylabel("Change in CAP (pF)", fontsize=12)
                 axes[i].grid(True, alpha=0.3)
@@ -469,7 +473,7 @@ class EMAnalysis:
         for i in range(num_runs):
             for j in range(self.ch):
                 axes[j].plot(self.zaber_x[i], self.zaber_y[i][j], "-", linewidth=2.5,
-                             color=colors[i], label=f"Run {i + 1}", alpha=0.8)
+                             color=colors[i], label=f"Run {self.run_numbers[i]}", alpha=0.8)
                 axes[j].set_title(f"CH {j + 1}", fontsize=14, fontweight="bold")
                 axes[j].set_xlabel("Pressure (kPa)", fontsize=11)
                 axes[j].set_ylabel("Change in CAP (pF)", fontsize=11)
@@ -550,7 +554,7 @@ class EMAnalysis:
             raw_pressure = [_clean(tf[k, 1], 3) for k in ridx if k < len(tf)]
 
             runs.append({
-                "run": i + 1,
+                "run": self.run_numbers[i],
                 "pressure": pressure,
                 "channels": channels,
                 "raw": {"time": raw_time, "cap": raw_cap, "pressure": raw_pressure},
@@ -653,7 +657,8 @@ class EMAnalysis:
                             pd.DataFrame(val).to_excel(writer, sheet_name=sheet_base, index=False)
                         except Exception:
                             for idx, elem in enumerate(val):
-                                sheet = f"{sheet_base}_run{idx + 1}"[:31]
+                                run_no = self.run_numbers[idx] if idx < len(self.run_numbers) else idx + 1
+                                sheet = f"{sheet_base}_run{run_no}"[:31]
                                 try:
                                     pd.DataFrame(elem).to_excel(writer, sheet_name=sheet, index=False)
                                 except Exception:
