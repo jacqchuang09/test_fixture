@@ -59,6 +59,7 @@ class SavedTestAnalyzer:
 
         # drop leftover files from older runs so the folder stays minimal.
         self._remove_stale_outputs()
+        self._remove_superseded_run_outputs()
 
         if test_type == "Shear":
             outputs = self._write_shear_layout(readings, channel_stats, report_output)
@@ -139,6 +140,34 @@ class SavedTestAnalyzer:
                     target.unlink()
             except OSError:
                 pass
+
+    def _remove_superseded_run_outputs(self):
+        # after a redo, delete the per-run plot files for runs that are no longer
+        # active (e.g. a superseded "Raw Signal/Run 2" folder, or
+        # "PS Curve/PS curve all CHs number #2.svg") so the outputs show exactly
+        # the runs the analysis used. Never touches the FUT/CAP input folders.
+        import re
+        import shutil
+        import run_log
+        active = run_log.active_runs(self._run_log())
+        if not active:
+            return
+        active = set(active)
+        raw = self.analysis_folder / "Raw Signal"
+        if raw.is_dir():
+            for child in raw.iterdir():
+                match = re.search(r"(\d+)", child.name)
+                if child.is_dir() and match and int(match.group(1)) not in active:
+                    shutil.rmtree(child, ignore_errors=True)
+        ps = self.analysis_folder / "PS Curve"
+        if ps.is_dir():
+            for svg in ps.glob("*.svg"):
+                match = re.search(r"#(\d+)", svg.name)
+                if match and int(match.group(1)) not in active:
+                    try:
+                        svg.unlink()
+                    except OSError:
+                        pass
 
     def _run_log(self):
         try:

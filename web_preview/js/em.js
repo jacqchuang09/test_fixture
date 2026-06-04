@@ -1245,6 +1245,7 @@
         emAllChRunsMode = "channel";
         renderEmAllChannelsRuns(readings);
         document.getElementById("em-summary").innerHTML = `
+          ${runListHtml(emRedoInfo)}
           ${emVariablesTable(readings)}
         `;
         document.getElementById("em-reportOutput").innerHTML = `

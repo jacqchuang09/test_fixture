@@ -350,6 +350,38 @@
         }
       }
 
+      // small HTML escaper for user-entered text (redo reasons).
+      function escapeRunHtml(text) {
+        return String(text == null ? "" : text)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+      }
+
+      // build the run-list panel: active runs vs superseded runs (grayed out, with
+      // the run that replaced them and the reason). Empty string when there is no
+      // run log (e.g. a bundled sample or a folder analyzed without the app).
+      function runListHtml(redoInfo) {
+        if (!redoInfo || !Array.isArray(redoInfo.all_runs) || !redoInfo.all_runs.length) return "";
+        const active = new Set((redoInfo.active_runs || []).map(Number));
+        const bySuperseded = {};
+        (redoInfo.redos || []).forEach((r) => { bySuperseded[Number(r.superseded_run)] = r; });
+        const items = redoInfo.all_runs.slice().map(Number).sort((a, b) => a - b).map((n) => {
+          if (active.has(n)) {
+            return `<li class="run-item"><span class="run-name">Run ${n}</span><span class="run-tag active">active</span></li>`;
+          }
+          const r = bySuperseded[n];
+          const by = r ? `superseded by Run ${r.new_run}` : "superseded";
+          const reason = r && r.reason ? ` — ${escapeRunHtml(r.reason)}` : "";
+          return `<li class="run-item superseded"><span class="run-name">Run ${n}</span><span class="run-tag">${by}${reason}</span></li>`;
+        }).join("");
+        const activeList = (redoInfo.active_runs || []).join(", ");
+        return `<div class="run-list-panel">
+            <h3 class="run-list-title">Runs in this test</h3>
+            <ul class="run-list">${items}</ul>
+            <p class="run-list-note">Analysis uses the active runs only${activeList ? ` (${activeList})` : ""}. Superseded runs are kept but not analyzed.</p>
+          </div>`;
+      }
+
       // embed the self-contained interactive (Plotly) plots in the analysis
       // window's "Interactive" tab — gives in-app zoom/pan/hover and click-to-
       // comment, served from the same Analysis_Plots.html written to disk.
