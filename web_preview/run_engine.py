@@ -205,43 +205,68 @@ class RunEngine:
             raise ZaberDisconnect()
 
     def manual_move(self, distance):
-        # force-monitored manual jog: move in small steps and read the load cell
-        # between them so a manual press can't crush the sensor or fixture. Halts
-        # the instant force crosses the ceiling. Simulated stages (no real load
-        # cell) fall back to the plain move.
+        # Force-monitored manual jog. Moves in small steps and reads the load cell
+        # between them so a manual press can't crush the sensor, and STREAMS the live
+        # force/position into self.live so the Manual window can poll /api/run-status
+        # and draw live graphs while the move runs. This runs in the caller's request
+        # thread; the threaded HTTP server serves the concurrent status polls. The
+        # 'simulated' flag lets the UI label real vs simulated motion. Works on the
+        # real rig and in simulation (where it paces a synthetic spring force).
         distance = float(distance)
         axis = STATE.axis
-        if axis is None:
-            return STATE.move(STATE.comport, distance)
         futek = _open_futek()
+        simulated = (axis is None) or (futek is None)
+        STATE.stop_requested = False
+        base_pos = STATE.position_mm
+        t0 = time.time()
+        trace = []
+        self._set(status="running", simulated=simulated, force=0.0, position=base_pos,
+                  elapsed=0.0, samples=0, trace=[], disconnect=False, safety_stop=False, message="")
+        steps = max(1, int(math.ceil(abs(distance) / MANUAL_STEP_MM)))
+        step = distance / steps
+        prev_force = None
+        force = 0.0
         try:
-            steps = max(1, int(math.ceil(abs(distance) / MANUAL_STEP_MM)))
-            step = distance / steps
-            prev_force = None
-            force = 0.0
-            for _ in range(steps):
-                try:
-                    axis.move_relative(step, _mm_unit(), wait_until_idle=True)
-                except Exception as exc:
-                    STATE.comms_lost = True
-                    return {"ok": False, "position": STATE.position_mm,
-                            "message": f"Manual move failed: {exc}"}
-                STATE._read_position()
-                force = abs(self._read_force(futek, max(0.0, STATE.position_mm - HOME_MM)))
-                if force > FORCE_CEILING_N or (prev_force is not None and abs(force - prev_force) > MANUAL_SPIKE_N):
+            for i in range(steps):
+                if STATE.stop_requested:
+                    self._stop_axis(axis)
+                    self._set(status="stopped", position=STATE.position_mm, force=force,
+                              message="Manual move stopped.")
+                    return {"ok": True, "position": STATE.position_mm, "force": force,
+                            "stopped": True, "simulated": simulated, "message": "Manual move stopped."}
+                if axis is not None:
                     try:
-                        axis.stop()
-                    except Exception:
-                        pass
-                    return {
-                        "ok": True, "position": STATE.position_mm, "force": force,
-                        "stopped_for_safety": True,
-                        "message": (f"Force limit reached ({force:.1f} N). Manual move stopped for "
-                                    f"safety at {STATE.position_mm:.2f} mm."),
-                    }
+                        axis.move_relative(step, _mm_unit(), wait_until_idle=True)
+                    except Exception as exc:
+                        STATE.comms_lost = True
+                        self._set(status="error", disconnect=True, position=STATE.position_mm,
+                                  message=f"Manual move failed: {exc}")
+                        return {"ok": False, "position": STATE.position_mm, "disconnect": True,
+                                "message": f"Manual move failed: {exc}"}
+                    STATE._read_position()
+                else:
+                    # simulation: advance the position and pace it so the live graph
+                    # streams instead of jumping straight to the end.
+                    STATE.position_mm = base_pos + step * (i + 1)
+                    time.sleep(SAMPLE_DT * 3)
+                force = self._read_force(futek, max(0.0, STATE.position_mm - HOME_MM))
+                t = time.time() - t0
+                trace.append([round(t, 4), round(force, 4)])
+                self._set(force=force, position=STATE.position_mm, elapsed=t,
+                          samples=i + 1, trace=list(trace))
+                if force > FORCE_CEILING_N or (prev_force is not None and abs(force - prev_force) > MANUAL_SPIKE_N):
+                    self._stop_axis(axis)
+                    msg = (f"Force limit reached ({force:.1f} N). Manual move stopped for "
+                           f"safety at {STATE.position_mm:.2f} mm.")
+                    self._set(status="error", safety_stop=True, position=STATE.position_mm,
+                              force=force, message=msg)
+                    return {"ok": True, "position": STATE.position_mm, "force": force,
+                            "stopped_for_safety": True, "simulated": simulated, "message": msg}
                 prev_force = force
-            return {"ok": True, "position": STATE.position_mm, "force": force,
-                    "message": f"Moved Zaber axis by {distance:g} mm. Current position: {STATE.position_mm:.2f} mm."}
+            self._set(status="completed", position=STATE.position_mm, force=force,
+                      trace=list(trace), message=f"Manual move complete. Position {STATE.position_mm:.2f} mm.")
+            return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,
+                    "message": f"Moved to {STATE.position_mm:.2f} mm. Current position: {STATE.position_mm:.2f} mm."}
         finally:
             if futek is not None:
                 try:

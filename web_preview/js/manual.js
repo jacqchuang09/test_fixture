@@ -7,7 +7,7 @@
  *
  * Structure:
  *   - Move control: manualMove, manualTestMove, stageManualDragMove,
- *     confirmManualDragMove, manualTestHome, startManualMotionLock,
+ *     confirmManualDragMove, manualTestHome,
  *     pauseManualMotion, isManualMoving, manualActuatorSpeed, nextManualTime.
  *   - Mode / state: manualControlMode, setManualControlMode,
  *     updateManualControlMode, setManualControlsLocked, setManualState.
@@ -28,7 +28,7 @@
 
       function resetManualTest() {
         if (manualMotionTimer) {
-          clearTimeout(manualMotionTimer);
+          clearInterval(manualMotionTimer);
           manualMotionTimer = null;
         }
         manualData = [];
@@ -91,25 +91,16 @@
         }
       }
 
-      function startManualMotionLock(message) {
-        if (manualMotionTimer) clearTimeout(manualMotionTimer);
-        setManualControlsLocked(true);
-        setManualState("MOVING", `${message}. controls locked while actuator motion is simulated.`);
-        manualMotionTimer = setTimeout(() => {
-          manualMotionTimer = null;
-          setManualControlsLocked(false);
-          setManualState("READY", "actuator movement complete. controls unlocked.");
-        }, 5000);
-      }
-
       function pauseManualMotion() {
+        // stop the live poll loop and tell the backend to halt the stepped move
+        // (its loop checks STATE.stop_requested between steps).
         if (manualMotionTimer) {
-          clearTimeout(manualMotionTimer);
+          clearInterval(manualMotionTimer);
           manualMotionTimer = null;
         }
+        callApi("/api/stop");
         setManualControlsLocked(false);
         setManualState("PAUSED", "manual actuator movement stopped. controls unlocked.");
-        callApi("/api/stop");
       }
 
       function setManualControlMode(mode) {
@@ -154,32 +145,52 @@
           setManualState("READY", `move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
           return;
         }
-        manualPosition += distance;
-        manualPendingPosition = manualPosition;
-        document.getElementById("manualDragPosition").value = manualPosition;
-        document.getElementById("manualDragReadout").textContent = `selected position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+        if (isManualMoving()) return;
+        // Lock all controls for the whole move and poll the backend for live
+        // force/position - it streams real readings into the run status as it steps
+        // the actuator, so the graphs update live (no faked values, no fixed timer).
+        setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
-
-        const latestTime = nextManualTime(distance);
-        const force = Math.max(0, Math.abs(manualPosition - 17) * 4.5 + Math.random() * 0.4);
-        const capacitance = 12 + force * 0.32 + Math.sin(latestTime * 2) * 0.12;
-        manualData.push({ time: latestTime, force, capacitance });
-        setManualState("RUNNING", `${description}. position ${manualPosition.toFixed(2)} mm, force ${force.toFixed(2)} N, speed ${manualActuatorSpeed().toFixed(2)} mm/s.`);
-        document.getElementById("manualAnalysisButton").disabled = false;
-        drawManualGraphs();
-        const result = await callApi("/api/move", { distance });
-        if (result && result.stopped_for_safety) {
-          // the actuator halted mid-jog at the force ceiling; reconcile the readout
-          // to the real stopped position and warn instead of locking for motion.
-          if (typeof result.position === "number") {
-            manualPosition = result.position;
+        setManualState("MOVING", `${description}. controls locked while the actuator moves.`);
+        const t0 = performance.now();
+        manualMotionTimer = setInterval(async () => {
+          const status = await callApi("/api/run-status");
+          if (!status || !status.ok) return;
+          const force = Number(status.force || 0);
+          if (typeof status.position === "number") {
+            manualPosition = status.position;
             manualPendingPosition = manualPosition;
-            document.getElementById("manualDragPosition").value = manualPosition;
+            document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
+            document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
           }
+          const time = (performance.now() - t0) / 1000;
+          manualData.push({ time, force, capacitance: 12 + force * 0.32 });
+          drawManualGraphs();
+          const motion = status.simulated ? "simulated motion" : "actuator moving";
+          setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
+        }, 100);
+
+        const result = await callApi("/api/move", { distance });
+
+        if (manualMotionTimer) { clearInterval(manualMotionTimer); manualMotionTimer = null; }
+        if (result && typeof result.position === "number") {
+          manualPosition = result.position;
+          manualPendingPosition = manualPosition;
+          document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
+          document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+        }
+        setManualControlsLocked(false);
+        document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
+        if (result && result.stopped_for_safety) {
           setManualState("PAUSED", result.message || "Force limit reached. Manual move stopped for safety.");
           return;
         }
-        startManualMotionLock(description);
+        if (!result || result.ok === false || result.disconnect) {
+          setManualState("ERROR", (result && result.message) || "Manual move failed.");
+          return;
+        }
+        const mode = result.simulated ? "simulated" : "real";
+        setManualState("READY", `move complete (${mode}). position ${manualPosition.toFixed(2)} mm.`);
       }
 
       function manualTestMove(direction) {
@@ -228,18 +239,13 @@
       function manualTestHome() {
         if (isManualMoving()) return;
         const homeDistance = 17 - manualPosition;
-        manualPosition = 17;
-        manualPendingPosition = 17;
-        document.getElementById("manualDragPosition").value = 17;
-        document.getElementById("manualDragReadout").textContent = "selected position: 17.0 mm. travel from baseline: 0.0 mm.";
-        document.getElementById("manualConfirmDragButton").disabled = true;
-        const latestTime = nextManualTime(homeDistance);
-        manualData.push({ time: latestTime, force: 0, capacitance: 12 });
-        setManualState("READY", `reset to home position at 17 mm using ${manualActuatorSpeed().toFixed(2)} mm/s.`);
-        document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
-        drawManualGraphs();
-        callApi("/api/home");
-        startManualMotionLock("returning actuator to home");
+        if (Math.abs(homeDistance) < 0.001) {
+          setManualState("READY", "already at home position (17 mm).");
+          return;
+        }
+        // route home through the same streamed, force-monitored, locked move so it
+        // updates the graphs live and locks the controls while it travels.
+        recordManualMove(homeDistance, "returning actuator to home");
       }
 
       function addManualPoint(force, time) {
