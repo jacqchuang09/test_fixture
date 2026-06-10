@@ -154,7 +154,10 @@ class RunEngine:
         # real load cell, or the coupled spring model in simulation.
         if futek is not None:
             try:
-                return futek.getNormalData() * LBF_TO_N
+                # the load cell can be wired either polarity; a press is always a
+                # compression, so report the force as a positive magnitude (this
+                # makes the sign of LBF_TO_N irrelevant - only its scale matters).
+                return abs(futek.getNormalData() * LBF_TO_N)
             except Exception:
                 return 0.0
         # simulation: a gently stiffening contact spring (force rises a little
@@ -337,6 +340,15 @@ class RunEngine:
                 if STATE.stop_requested:
                     self._stop_axis(axis); self._home(axis)
                     self._set(status="stopped", message="Run stopped.", position=HOME_MM)
+                    return
+                # honor Pause during the retract too (not just the descend), else a
+                # pause here stops the motor but the loop spins on with status
+                # "running" and the run never ends.
+                if STATE.pause_requested:
+                    self._stop_axis(axis); self._home(axis)
+                    STATE.pause_requested = False
+                    self._set(status="paused", position=HOME_MM,
+                              message=f"Run {run_number} paused - repeat this run.")
                     return
                 if axis is None:
                     depth -= ascend * SAMPLE_DT
