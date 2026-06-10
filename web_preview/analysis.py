@@ -85,6 +85,13 @@ class SavedTestAnalyzer:
             # which renders all active runs from the FUT data.
             if fut_runs and set(fut_runs.keys()) == set(cap_runs.keys()):
                 em_summary = self._run_real_em()
+            elif fut_runs:
+                # EM analysis requires a capacitance file for every active run. The
+                # CAP/ folder is the source of truth (added manually now, recorded by
+                # the computer later). Rather than silently show synthetic preview
+                # data, tell the operator exactly which CAP files to add and stop;
+                # the analysis auto-detects them on the next run.
+                return self._missing_cap_response(fut_runs, cap_runs)
 
         if em_summary is not None:
             channel_stats = em_summary["channel_stats"]
@@ -321,6 +328,24 @@ class SavedTestAnalyzer:
                     if len(r) >= 2:
                         stats[r[0]] = r[1]
         return stats
+
+    def _missing_cap_response(self, fut_runs, cap_runs):
+        # EM analysis needs a capacitance (CAP) file for every active run. Spell out
+        # exactly which files to add and where, so the operator can drop them in and
+        # re-run (auto-detected). No silent synthetic-preview fallback.
+        cap_dir = self.test_folder / "CAP"
+        missing = sorted(set(fut_runs.keys()) - set(cap_runs.keys()))
+        if missing:
+            needed = ", ".join(f"Run {r}.csv" for r in missing)
+            detail = f"Add the capacitance file(s) {needed} to {cap_dir}"
+        else:
+            have = ", ".join(f"Run {r}" for r in sorted(fut_runs))
+            detail = (f"The capacitance files in {cap_dir} do not line up with the "
+                      f"recorded runs ({have})")
+        return {
+            "ok": False,
+            "message": f"EM analysis needs capacitance data for every run. {detail}, then run analysis again.",
+        }
 
     def _find_files(self, folder_name, pattern):
         # helper for finding saved run files inside FUT or CAP.

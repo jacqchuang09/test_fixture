@@ -351,6 +351,14 @@
         document.getElementById("emAnalysisButton").disabled = true;
         const result = await runAnalysisProgress("Generating EM analysis outputs...", () => callApi("/api/perform-analysis"));
         document.getElementById("emAnalysisButton").disabled = false;
+        // missing capacitance (or other failure): show the message and stop, rather
+        // than opening an empty analysis window.
+        if (!result || !result.ok) {
+          const msg = (result && result.message) || "EM analysis could not run.";
+          appendEmStatus(msg);
+          showErrorDialog(msg, "Capacitance data needed");
+          return;
+        }
         populateEmAnalysis(result.message || "em analysis completed.", result.analysis || null);
         emAnalysisModal.showModal();
       }

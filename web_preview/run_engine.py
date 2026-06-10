@@ -371,11 +371,15 @@ class RunEngine:
 
             self._home(axis)
             fut_path = self._write_fut(test_folder, run_number, readings)
-            # In simulation there's no capacitance logger, so synthesize a CAP file
-            # for this run. That lets the real EM analysis engine run on simulated
-            # data (full matplotlib figures + interactive plots) exactly like the
-            # rig. On real hardware the external logger writes CAP, so skip this.
-            if simulated:
+            # Capacitance source of truth is the CAP/ folder. On the real rig (a
+            # Zaber is connected) we NEVER fabricate CAP - the operator adds the CAP
+            # files manually for now, and the computer will record them itself later;
+            # either way the analysis auto-detects whatever real CAP is present. We
+            # only synthesize CAP on a pure-software demo machine (no actuator at
+            # all) so the full analysis pipeline can still be shown end-to-end.
+            # Keyed on the actuator (axis), not the load cell, so a missing/undetected
+            # FUTEK does not cause fake capacitance to be written on the rig.
+            if axis is None:
                 self._write_cap(test_folder, run_number, readings, surface_area_mm2)
             # never overwrite: record this run (and the redo reason) in the log.
             import run_log
