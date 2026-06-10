@@ -159,10 +159,13 @@ if _REAL_FUTEK_AVAILABLE:
             print(f"Sensor Reading: {self.NormalData:.3f}")
 
         def getNormalData(self):
-            # Two load cells are in use: one outputs a positive reading under
-            # compression, the other negative. Report the magnitude so the force is
-            # always positive no matter which cell is connected.
-            return abs(FUTEK.Devices.DeviceUSB225.GetChannelXReading(self.USB225, 0))
+            # Raw SIGNED reading. Two load cells are in use - one reads positive
+            # under compression, the other negative. The run engine tares to the
+            # start-of-press baseline and takes the magnitude of the change, which
+            # is correct for either polarity. Do NOT abs here: abs-ing the raw value
+            # before the baseline is subtracted can still come out negative when the
+            # cell has a resting offset.
+            return FUTEK.Devices.DeviceUSB225.GetChannelXReading(self.USB225, 0)
 
         def connect(self):
             try:

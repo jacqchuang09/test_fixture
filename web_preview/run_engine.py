@@ -161,10 +161,11 @@ class RunEngine:
         # real load cell, or the coupled spring model in simulation.
         if futek is not None:
             try:
-                # the load cell can be wired either polarity; a press is always a
-                # compression, so report the force as a positive magnitude (this
-                # makes the sign of LBF_TO_N irrelevant - only its scale matters).
-                return abs(futek.getNormalData() * LBF_TO_N)
+                # Signed converted reading. Callers tare to the start-of-press
+                # baseline (force - init_force) and then take the magnitude, which
+                # gives a positive compression force for a load cell of EITHER
+                # polarity. Abs is applied to the tared change, not here.
+                return futek.getNormalData() * LBF_TO_N
             except Exception:
                 return 0.0
         # simulation: a gently stiffening contact spring (force rises a little
@@ -268,6 +269,11 @@ class RunEngine:
             nonlocal idx, prev_force
             if STATE.comms_lost:
                 raise ZaberDisconnect()
+            # Callers pass the tared change (force - start-of-press baseline). Take
+            # the magnitude so a load cell of either polarity reads positive during
+            # compression - this is the single place the live/recorded force is made
+            # positive, AFTER the baseline has been removed.
+            stage_force = abs(stage_force)
             # force-spike / over-force protection: a sudden jump (real contact/jam)
             # or any reading past the hard ceiling stops the run for safety. The
             # spike cutoff scales with the move speed; the smooth sim spring never
@@ -464,7 +470,8 @@ class RunEngine:
                 force = self._read_force(futek, depth)
                 if init_force is None:
                     init_force = force
-                stage = force - init_force
+                # tare to baseline, then magnitude (positive for either cell polarity)
+                stage = abs(force - init_force)
                 if STATE.comms_lost:
                     raise ZaberDisconnect()
                 if (prev_force is not None and abs(stage - prev_force) > self._spike_limit(descend * SAMPLE_DT)) or stage > FORCE_CEILING_N:
@@ -630,7 +637,8 @@ class RunEngine:
                     f = self._read_force(force_futek, d)
                     if init_force is None:
                         init_force = f
-                    stage = f - init_force
+                    # tare to baseline, then magnitude (positive for either polarity)
+                    stage = abs(f - init_force)
                     if (cal_prev is not None and abs(stage - cal_prev) > self._spike_limit(REAL_CYC_DESCEND_MM_S * SAMPLE_DT)) or stage > FORCE_CEILING_N:
                         raise ForceSpikeStop()
                     cal_prev = stage
