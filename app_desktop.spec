@@ -3,6 +3,8 @@
 #   Mac:     pyinstaller app_desktop.spec   ->  dist/ZaberGUI.app
 #   Windows: pyinstaller app_desktop.spec   ->  dist\ZaberGUI\ZaberGUI.exe
 import sys
+import os
+import glob
 
 block_cipher = None
 
@@ -35,6 +37,26 @@ if sys.platform.startswith("win"):
     ):
         binaries.append((f"libs/windows/{dll}", "."))
 
+# zaber-motion is a thin Python wrapper over a native core library it loads at
+# import time. The loader (zaber_motion/bindings.py) looks for the library at:
+#     <zaber_motion>/../zaber_motion_bindings/zaber-motion-core-<os>-<arch>.<ext>
+# That sibling "zaber_motion_bindings" folder holds the .dll/.dylib/.so but has
+# no __init__.py, so it is NOT an importable package and PyInstaller's module
+# scan never collects it. Without this, a frozen build fails at connect time
+# with "Could not find library zaber-motion-core...". Copy whatever native lib
+# is installed for this OS into the same relative folder the loader expects.
+zaber_hiddenimports = ["zaber_motion", "zaber_motion.ascii", "zaber_motion.exceptions"]
+try:
+    import zaber_motion as _zm
+    _bind_dir = os.path.normpath(
+        os.path.join(os.path.dirname(_zm.__file__), "..", "zaber_motion_bindings"))
+    if os.path.isdir(_bind_dir):
+        for _f in glob.glob(os.path.join(_bind_dir, "*")):
+            if os.path.isfile(_f):
+                binaries.append((_f, "zaber_motion_bindings"))
+except Exception:
+    pass
+
 a = Analysis(
     ["app_desktop.py"],
     pathex=["web_preview"],
@@ -56,7 +78,7 @@ a = Analysis(
         "em_analysis",
         "numpy", "pandas", "scipy", "scipy.signal", "scipy.ndimage",
         "matplotlib", "openpyxl",
-    ],
+    ] + zaber_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=[],
