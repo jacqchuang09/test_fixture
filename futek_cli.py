@@ -52,13 +52,16 @@ _register_dll_dir()
 _REAL_FUTEK_AVAILABLE = False
 _FUTEK_IMPORT_ERROR = None
 try:
-    # tell pythonnet to use Mono before any clr import.
-    # ignored if pythonnet picks a runtime automatically.
-    try:
-        from pythonnet import load as _pythonnet_load
-        _pythonnet_load("mono")
-    except Exception:
-        pass
+    # Pick the .NET runtime before any clr import. Windows has .NET Framework
+    # natively, so let pythonnet use its default (netfx) - forcing Mono there can
+    # stop the real FUTEK driver from loading (and silently fall back to the mock).
+    # Only force Mono on macOS/Linux, where it is the runtime that is present.
+    if not sys.platform.startswith("win"):
+        try:
+            from pythonnet import load as _pythonnet_load
+            _pythonnet_load("mono")
+        except Exception:
+            pass
 
     import clr  # noqa: F401  (loads .NET runtime when imported)
     clr.AddReference("FUTEK.Devices")

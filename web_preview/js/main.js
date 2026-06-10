@@ -1055,7 +1055,18 @@
         if (isManualMoving()) event.preventDefault();
       });
 
+      // On the Windows rig, default the save folder to the operator's Downloads.
+      // The value baked into index.html is only the Mac dev default; this runs at
+      // load (before the user types anything), so it never clobbers a typed path.
+      function applyDefaultSaveFolder() {
+        const el = document.getElementById("saveFolder");
+        if (!el) return;
+        const isWindows = /Win/i.test(navigator.platform || navigator.userAgent || "");
+        if (isWindows) el.value = "C:\\Users\\eng\\Downloads\\";
+      }
+
       // startup calls. these set defaults, draw empty graphs, and prepare field validation.
+      applyDefaultSaveFolder();
       initializeSensorIdBuilder();
       initializeCalibrationSettings();
       updateSensorIdMode();
