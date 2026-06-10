@@ -371,7 +371,13 @@ class RunEngine:
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
         except Exception as exc:
-            self._set(status="error", message=f"Run failed: {exc}")
+            # any unexpected failure: stop and home the actuator so it is never
+            # left moving or in an unknown state when the UI re-enables Start,
+            # then surface the real error so the cause is visible.
+            self._stop_axis(axis)
+            self._home(axis)
+            self._set(status="error", position=HOME_MM,
+                      message=f"Run failed: {exc}")
         finally:
             if futek is not None:
                 try:
