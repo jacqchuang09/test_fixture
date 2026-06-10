@@ -159,7 +159,10 @@ if _REAL_FUTEK_AVAILABLE:
             print(f"Sensor Reading: {self.NormalData:.3f}")
 
         def getNormalData(self):
-            return FUTEK.Devices.DeviceUSB225.GetChannelXReading(self.USB225, 0)
+            # Two load cells are in use: one outputs a positive reading under
+            # compression, the other negative. Report the magnitude so the force is
+            # always positive no matter which cell is connected.
+            return abs(FUTEK.Devices.DeviceUSB225.GetChannelXReading(self.USB225, 0))
 
         def connect(self):
             try:
