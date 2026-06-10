@@ -1,5 +1,5 @@
 /*
- * em.js — EM (electromechanical) test window.
+ * em.js - EM (electromechanical) test window.
  *
  * Owns the EM test modal and its analysis modal. Drives the multi-run EM
  * simulation, records live force readings into a table + graph, and renders
@@ -29,8 +29,8 @@
         emStatusEl.scrollTop = emStatusEl.scrollHeight;
       }
 
-      function setEmState(state, message = state) {
-        setStatePill(emStateEl, state, message === state ? "" : message);
+      function setEmState(state, message = state, variant = "") {
+        setStatePill(emStateEl, state, message === state ? "" : message, variant);
         emStatusLines.push(`[${stamp()}] ${state}: ${message}`);
         setEmStatus(emStatusLines);
       }
@@ -156,7 +156,11 @@
       async function startEmTest() {
         if (emRunTimer || emReturnHomeTimer) return;
 
-        // Redo mode: data is never overwritten — this creates a NEW run that
+        // Start Test hard gate: on a real rig, require a live Zaber connection
+        // before any motion. Stays soft in simulation (no real load cell).
+        if (!(await zaberStartGateOk())) return;
+
+        // Redo mode: data is never overwritten - this creates a NEW run that
         // supersedes the chosen one. A reason is required (recorded in the report).
         const cfg = config();
         let redoOf = null;
@@ -166,7 +170,7 @@
             `You're redoing run ${cfg.run_to_redo}. This creates a new run that replaces it in the analysis (run ${cfg.run_to_redo} is kept but no longer used). Enter why:`,
             "Reason for redo");
           if (!redoReason) {
-            setEmState("BETWEEN_RUNS_PAUSED", "redo cancelled — a reason is required to redo a run.");
+            setEmState("BETWEEN_RUNS_PAUSED", "redo cancelled - a reason is required to redo a run.");
             return;
           }
           redoOf = cfg.run_to_redo;
@@ -177,8 +181,6 @@
         document.getElementById("emAnalysisButton").disabled = true;
         document.getElementById("emTestCloseButton").disabled = true;
 
-        // clear any prior readings for this run (e.g. a repeat after a pause).
-        emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
         emRunStartedAt = performance.now();
         setEmState("RUNNING", redoOf ? `redoing run ${redoOf}…` : `run ${emCurrentRun} running.`);
 
@@ -190,6 +192,14 @@
           setEmState("BETWEEN_RUNS_PAUSED", (result && result.message) || "could not start run.");
           return;
         }
+        // a redo creates a NEW run - adopt the run number the backend actually
+        // assigned so the collected readings are tagged correctly (e.g. redoing
+        // run 2 records the data as run 4, not run 2).
+        if (Number.isFinite(Number(result.run_number))) {
+          emCurrentRun = Number(result.run_number);
+        }
+        // clear any prior readings for THIS run number (e.g. a repeat after a pause).
+        emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
         emRunTimer = setInterval(pollRunStatus, 100);
       }
 
@@ -200,7 +210,16 @@
         const elapsed = Number(status.elapsed || 0);
         const force = Number(status.force || 0);
         if (status.status === "running" || status.status === "completed") {
-          emReadings.push({ run: emCurrentRun, time: elapsed, force });
+          // rebuild this run's readings from the backend's dense 100 Hz trace so
+          // the live force graph is smooth (not one point per poll).
+          if (Array.isArray(status.trace) && status.trace.length) {
+            emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
+            for (const point of status.trace) {
+              emReadings.push({ run: emCurrentRun, time: point[0], force: point[1] });
+            }
+          } else {
+            emReadings.push({ run: emCurrentRun, time: elapsed, force });
+          }
           appendEmReading(emCurrentRun, elapsed, force);
           drawEmForceGraph();
         }
@@ -213,11 +232,56 @@
         } else if (status.status === "stopped" || status.status === "error") {
           clearInterval(emRunTimer); emRunTimer = null;
           setEmControlsLocked(false);
+          document.getElementById("emPauseButton").disabled = true;
+          document.getElementById("emTestCloseButton").disabled = false;
+          if (status.disconnect) {
+            // hard-block Start until the actuator is reconnected; watch for it live.
+            document.getElementById("emStartButton").disabled = true;
+            setEmState("DISCONNECTED", status.message || "Actuator connection lost. Reconnect the Zaber to continue.");
+            startReconnectWatch(() => {
+              document.getElementById("emStartButton").disabled = false;
+              setEmState("RECONNECTED", "Zaber reconnected and re-homed. You can continue.");
+            });
+          } else if (status.safety_stop) {
+            // safety trip (force spike / ceiling / travel limit): the engine already
+            // stopped and returned home. Pop a dialog; on Continue, restart THIS run
+            // (same run number, fresh data collection).
+            document.getElementById("emStartButton").disabled = false;
+            setEmState("STOPPED - NOT SAVED", status.message || "Run stopped for safety.", "discarded");
+            showSafetyStopDialog(status.message, () => restartCurrentEmRun());
+          } else {
+            // a manual stop: this run's data was not saved, so use the same amber
+            // "discarded" language.
+            document.getElementById("emStartButton").disabled = false;
+            setEmState("STOPPED - NOT SAVED",
+              `${status.message || "Run stopped."} This run's data was discarded - press Start to redo run ${emCurrentRun}.`,
+              "discarded");
+          }
+        }
+      }
+
+      // restart the current run after a safety stop: same run number, fresh data,
+      // no redo/supersession. The engine has already homed; this re-approaches.
+      async function restartCurrentEmRun() {
+        if (emRunTimer || emReturnHomeTimer) return;
+        if (!(await zaberStartGateOk())) { document.getElementById("emStartButton").disabled = false; return; }
+        document.getElementById("emStartButton").disabled = true;
+        document.getElementById("emPauseButton").disabled = false;
+        document.getElementById("emAnalysisButton").disabled = true;
+        document.getElementById("emTestCloseButton").disabled = true;
+        emRunStartedAt = performance.now();
+        setEmState("RUNNING", `restarting run ${emCurrentRun} after a safety stop...`);
+        const result = await callApi("/api/start-run", { run_number: emCurrentRun });
+        if (!result || !result.ok) {
           document.getElementById("emStartButton").disabled = false;
           document.getElementById("emPauseButton").disabled = true;
           document.getElementById("emTestCloseButton").disabled = false;
-          setEmState("PAUSED_RESET_REQUIRED", status.message || "run stopped.");
+          setEmState("STOPPED - NOT SAVED", (result && result.message) || "could not restart run.", "discarded");
+          return;
         }
+        if (Number.isFinite(Number(result.run_number))) emCurrentRun = Number(result.run_number);
+        emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
+        emRunTimer = setInterval(pollRunStatus, 100);
       }
 
       function handleRunPaused(message) {
@@ -226,7 +290,11 @@
         document.getElementById("emPauseButton").disabled = true;
         document.getElementById("emTestCloseButton").disabled = false;
         document.getElementById("emAnalysisButton").disabled = emCompletedRuns < emTotalRuns;
-        setEmState("PAUSED_RESET_REQUIRED", message || `run ${emCurrentRun} paused. repeat this run.`);
+        // user pressed Pause mid-run: the backend discarded this run's partial data,
+        // so it must be repeated. Amber pill makes "nothing was saved" unmistakable.
+        setEmState("PAUSED - NOT SAVED",
+          `Run ${emCurrentRun} paused by you. This run's data was discarded - press Start to redo run ${emCurrentRun}.`,
+          "discarded");
       }
 
       function completeCurrentEmRun() {
@@ -239,12 +307,17 @@
         if (emCompletedRuns >= emTotalRuns) {
           document.getElementById("emStartButton").disabled = true;
           document.getElementById("emAnalysisButton").disabled = false;
-          setEmState("COMPLETED", `all ${emTotalRuns} run(s) completed. perform analysis is now available.`);
+          setEmState("COMPLETED", `all ${emTotalRuns} run(s) completed and saved. perform analysis is now available.`, "kept");
           resetRedoWorkflowAfterRun();
           return;
         }
 
-        setEmState("BETWEEN_RUNS_PAUSED", `run ${emCurrentRun} completed. click start before next run.`);
+        // run finished normally: the backend already saved its data. This is an
+        // automatic pause between runs, NOT a discard. Green pill + "saved" wording
+        // so it is never confused with a user Pause (which discards the run).
+        setEmState("RUN SAVED - PAUSED",
+          `Run ${emCurrentRun} complete and saved. Auto-paused before run ${emCurrentRun + 1} - press Start when ready.`,
+          "kept");
         emCurrentRun += 1;
         document.getElementById("emStartButton").disabled = false;
         drawEmForceGraph();
@@ -270,7 +343,7 @@
       // TODO: replace with real per-channel capacitance readings once the CAP
       // sensor is wired up. Until then, EM analysis tabs synthesize channel
       // values from force data so they still render. The on-disk CAP files
-      // written by the Python analyzer ARE the source of truth — this is a
+      // written by the Python analyzer ARE the source of truth - this is a
       // browser-side preview only.
       function emChannelValue(point, channel) {
         const channelScale = 0.82 + channel * 0.055;
@@ -826,7 +899,7 @@
         document.getElementById("emByRunButton")?.classList.toggle("active", emAllChRunsMode === "run");
         if (emImages) {
           const path = emAllChRunsMode === "run" ? emImages.all_ch_per_run : emImages.all_run_per_ch;
-          const label = emAllChRunsMode === "run" ? "PS curves — all channels per run" : "PS curves — all runs per channel";
+          const label = emAllChRunsMode === "run" ? "PS curves - all channels per run" : "PS curves - all runs per channel";
           target.innerHTML = `<div class="em-analysis-png-wrap">${emPngImg(path, label)}</div>`;
           return;
         }
@@ -1207,15 +1280,22 @@
           time: Number(point.time || 0),
           force: Number(point.force || 0),
         })) : [];
-        const readings = backendReadings.length ? backendReadings : (emReadings.length ? emReadings : [{ force: 0, time: 0, run: 1 }]);
+        // capture redo/supersession info (active runs + reasons) up front.
+        emRedoInfo = (analysis && analysis.redo_info) ? analysis.redo_info : null;
+        let readings = backendReadings.length ? backendReadings : (emReadings.length ? emReadings : [{ force: 0, time: 0, run: 1 }]);
+        // never show superseded runs - display only the active runs.
+        const activeRuns = emRedoInfo && Array.isArray(emRedoInfo.active_runs) ? emRedoInfo.active_runs.map(Number) : null;
+        if (activeRuns && activeRuns.length) {
+          const keep = new Set(activeRuns);
+          const filtered = readings.filter((point) => keep.has(Number(point.run)));
+          if (filtered.length) readings = filtered;
+        }
         emAnalysisReadings = readings;
         // adopt the real computed curves when the python engine returned them.
         emPlotData = (analysis && analysis.em_plots && Array.isArray(analysis.em_plots.runs) && analysis.em_plots.runs.length)
           ? analysis.em_plots : null;
         // adopt the real matplotlib PNG figures when present (preferred display).
         emImages = (analysis && analysis.em_images) ? analysis.em_images : null;
-        // capture redo/supersession info for the Report Output reason column.
-        emRedoInfo = (analysis && analysis.redo_info) ? analysis.redo_info : null;
         // embed the interactive (zoom + click-to-comment) plots in the Interactive tab.
         renderInteractivePanel("em", analysis);
         const runs = [...new Set(readings.map((point) => point.run))].sort((a, b) => a - b);

@@ -129,15 +129,16 @@
       }
       /* run list: active vs superseded runs (after a redo) */
       .run-list-panel { margin: 0 0 18px; }
-      .run-list-title { font-size: 14px; margin: 0 0 8px; }
+      .run-list-title { font-size: 14px; margin: 0 0 8px; color: var(--text); }
+      .analysis-section-title { font-size: 14px; margin: 0 0 8px; color: var(--text); font-weight: 700; }
       .run-list { list-style: none; padding: 0; margin: 0 0 8px; display: flex; flex-direction: column; gap: 4px; }
-      .run-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+      .run-item { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--text); font-size: 14px; }
       .run-item .run-name { font-weight: 600; min-width: 58px; }
-      .run-item .run-tag { font-size: 12px; }
+      .run-item .run-tag { font-size: 14px; color: var(--text); }
       .run-item .run-tag.active { color: var(--green-dark); font-weight: 600; }
-      .run-item.superseded { color: var(--muted); background: #f3f4f6; opacity: 0.8; }
+      .run-item.superseded { background: #f3f4f6; }
       .run-item.superseded .run-name { text-decoration: line-through; }
-      .run-list-note { font-size: 12px; color: var(--muted); margin: 0; }
+      .run-list-note { font-size: 12px; color: var(--muted); font-weight: 500; margin: 0; }
       .reason-dialog-input {
         width: 100%;
         margin-top: 10px;
@@ -600,6 +601,12 @@
       .main-message:empty {
         display: none;
       }
+      /* the config message sits inside the left-stack grid, so let the grid's
+         20px gap handle spacing evenly (no pull-up margin like the top message). */
+      #configMessage {
+        margin: 0;
+        width: 100%;
+      }
 
       .status {
         min-height: 260px;
@@ -647,6 +654,17 @@
       .state-pill .state-message {
         font-weight: 500;
         letter-spacing: 0;
+      }
+
+      /* semantic colors so a glance tells data-kept from data-discarded:
+         green = this run's data was saved/kept; amber = nothing was saved. */
+      .state-pill.state-kept {
+        background: #e7f6ec;
+        color: #1c7a3d;
+      }
+      .state-pill.state-discarded {
+        background: #fdeede;
+        color: #9a5b00;
       }
 
       .analysis-page {

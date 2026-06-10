@@ -1,5 +1,5 @@
 /*
- * manual.js — Manual test window.
+ * manual.js - Manual test window.
  *
  * Owns the manual test modal and its analysis modal. Handles jog / drag /
  * home actuator moves, the live recorded-data log (time, force, capacitance),
@@ -48,7 +48,7 @@
       }
 
       function manualActuatorSpeed() {
-        return Math.min(25, Math.max(0.01, Number(document.getElementById("manualActuatorSpeed").value || 2)));
+        return Math.min(2, Math.max(0.01, Number(document.getElementById("manualActuatorSpeed").value || 1)));
       }
 
       function manualControlMode() {
@@ -148,10 +148,10 @@
         return latestTime + Math.abs(distance) / manualActuatorSpeed();
       }
 
-      function recordManualMove(distance, description) {
+      async function recordManualMove(distance, description) {
         const target = manualPosition + distance;
         if (target < ACTUATOR_MIN_MM || target > ACTUATOR_MAX_MM) {
-          setManualState("READY", `move blocked — position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}–${ACTUATOR_MAX_MM} mm.`);
+          setManualState("READY", `move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
           return;
         }
         manualPosition += distance;
@@ -167,7 +167,18 @@
         setManualState("RUNNING", `${description}. position ${manualPosition.toFixed(2)} mm, force ${force.toFixed(2)} N, speed ${manualActuatorSpeed().toFixed(2)} mm/s.`);
         document.getElementById("manualAnalysisButton").disabled = false;
         drawManualGraphs();
-        callApi("/api/move", { distance });
+        const result = await callApi("/api/move", { distance });
+        if (result && result.stopped_for_safety) {
+          // the actuator halted mid-jog at the force ceiling; reconcile the readout
+          // to the real stopped position and warn instead of locking for motion.
+          if (typeof result.position === "number") {
+            manualPosition = result.position;
+            manualPendingPosition = manualPosition;
+            document.getElementById("manualDragPosition").value = manualPosition;
+          }
+          setManualState("PAUSED", result.message || "Force limit reached. Manual move stopped for safety.");
+          return;
+        }
         startManualMotionLock(description);
       }
 
@@ -186,9 +197,9 @@
         }
         const incrementInput = document.getElementById("manualIncrementDistance");
         const increment = Number(incrementInput.value || 0.1);
-        if (!Number.isFinite(increment) || increment < 0.1 || increment > 15) {
-          setManualState("READY", "increment distance must be between 0.1 mm and 15 mm.");
-          incrementInput.value = Math.min(15, Math.max(0.1, increment || 0.1));
+        if (!Number.isFinite(increment) || increment < 0.01 || increment > 15) {
+          setManualState("READY", "increment distance must be between 0.01 mm and 15 mm.");
+          incrementInput.value = Math.min(15, Math.max(0.01, increment || 0.1));
           return;
         }
         const signedDistance = direction === "down" ? increment : -increment;
@@ -254,9 +265,15 @@
       function drawManualGraphs() {
         updateManualTimeControls();
         const settings = manualGraphSettings();
+        // live manual graphs autoscale: force axes start at 0-5 N and grow, and
+        // capacitance axes track a sensible band around the data as it comes in.
+        settings.autoScale = true;
         const latest = manualData.length ? manualData[manualData.length - 1].time : 0;
         const startTime = settings.cumulativeTime ? 0 : Math.max(0, latest - settings.seconds);
-        const visible = manualData.filter((point) => point.time >= startTime);
+        let visible = manualData.filter((point) => point.time >= startTime);
+        // before any data exists, seed a reasonable starting view (force ~0-5 N,
+        // capacitance around its resting value) so the empty graphs open sensibly.
+        if (!visible.length) visible = [{ time: 0, force: 0, capacitance: 12 }];
         drawMiniGraph("manualCapForceGraph", visible, "force", "capacitance", "Force (N)", "Capacitance", settings);
         drawMiniGraph("manualForceTimeGraph", visible, "time", "force", "Time (s)", "Force (N)", settings);
         drawMiniGraph("manualCapTimeGraph", visible, "time", "capacitance", "Time (s)", "Capacitance", settings);
@@ -317,13 +334,26 @@
         showAnalysisTab("manual", activeTab);
       }
 
-      function manualMove(distance) {
+      async function manualMove(distance) {
+        if (calibrationMoveInFlight) return;
         const target = currentPosition + distance;
         if (target < ACTUATOR_MIN_MM || target > ACTUATOR_MAX_MM) {
-          addCalibrationUpdate(`ERROR: move blocked — position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}–${ACTUATOR_MAX_MM} mm.`);
+          addCalibrationUpdate(`ERROR: move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
           return;
         }
-        setPositionReadout(target);
-        addCalibrationUpdate(`manual move ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm.`);
-        callApi("/api/move", { distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
+        calibrationMoveInFlight = true;
+        addCalibrationUpdate(`moving ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm…`);
+        try {
+          const result = await callApi("/api/move", { distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
+          // update the readout only once the stage has finished moving.
+          if (result && result.stopped_for_safety) {
+            if (typeof result.position === "number") setPositionReadout(result.position);
+            addCalibrationUpdate(result.message || "Force limit reached. Move stopped for safety.");
+          } else if (result && typeof result.position === "number") {
+            setPositionReadout(result.position);
+            addCalibrationUpdate(`move complete. position ${result.position.toFixed(2)} mm.`);
+          }
+        } finally {
+          calibrationMoveInFlight = false;
+        }
       }

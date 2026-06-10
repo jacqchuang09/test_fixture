@@ -4,8 +4,8 @@ Wrapper around the FUTEK load cell DLL.
 Tries to load the real .NET-based driver first. If that fails (typically on
 macOS Apple Silicon, where Mono is x86_64 but Python is arm64), falls back
 to MockFUTEKDeviceCLI which returns synthetic force values that simulate
-slow compression. This lets the whole EM test pipeline — run_em_run, the
-browser polling, CSV file writing, and analysis — be exercised end-to-end
+slow compression. This lets the whole EM test pipeline - run_em_run, the
+browser polling, CSV file writing, and analysis - be exercised end-to-end
 on a Mac without real hardware.
 
 When you actually run on Windows (or get Mono+pythonnet working on the Mac),
@@ -71,20 +71,20 @@ except Exception as exc:
 
 
 # ----------------------------------------------------------------------
-# mock implementation — always defined.
+# mock implementation - always defined
 # ----------------------------------------------------------------------
 class MockFUTEKDeviceCLI:
     """
     Stand-in for the real FUTEK driver. Returns synthetic raw values that,
     after run_em_run's calibration (`* -4.44822`) and zero-baseline
     subtraction, produce a force curve that ramps from ~0 N up past 20 N
-    over about 4 seconds — naturally triggering the upper-limit safety
+    over about 4 seconds - naturally triggering the upper-limit safety
     stop. Used when the .NET runtime isn't available.
     """
 
     def __init__(self):
         print("=" * 64)
-        print("MOCK FUTEK ACTIVE — synthetic force readings only.")
+        print("MOCK FUTEK ACTIVE - synthetic force readings only.")
         if _FUTEK_IMPORT_ERROR is not None:
             print(f"Reason: {_FUTEK_IMPORT_ERROR}")
         print("Install Mono on x86_64 Python or run on Windows for real data.")
@@ -123,7 +123,7 @@ class MockFUTEKDeviceCLI:
 
 
 # ----------------------------------------------------------------------
-# real implementation — only defined if .NET loaded successfully.
+# real implementation - only defined if .NET loaded successfully.
 # ----------------------------------------------------------------------
 if _REAL_FUTEK_AVAILABLE:
     class RealFUTEKDeviceCLI:
@@ -195,7 +195,7 @@ else:
 
 
 # ----------------------------------------------------------------------
-# manual debugging entry point — works with either real or mock.
+# manual debugging entry point - works with either real or mock.
 # ----------------------------------------------------------------------
 if __name__ == '__main__':
     cli = FUTEKDeviceCLI()

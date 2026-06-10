@@ -1,5 +1,5 @@
 /*
- * main.js — setup screen, navigation, and startup wiring.
+ * main.js - setup screen, navigation, and startup wiring.
  *
  * Loaded LAST. It contains the first (basic settings) screen logic and the
  * launchers for every test window, then ends with all DOM event-listener
@@ -51,7 +51,7 @@
       }
 
       function updateFolderInfoTag() {
-        if (mainMessageEl.classList.contains("error")) return;
+        if (messageTargetEl().classList.contains("error")) return;
         const folder = currentComputedTestFolder();
         setMainMessage(folder ? `Folder path: ${folder}` : "", folder ? "info" : "");
       }
@@ -133,7 +133,7 @@
           sensor_id: activeSensorId(),
           sensor_type: document.getElementById("sensorType").value,
           test_type: testType,
-          runs: redoRun ? 1 : (singleDatasetTest ? 1 : Number(document.getElementById("runs").value || 3)),
+          runs: redoRun ? 1 : (singleDatasetTest ? 1 : Math.min(MAX_EM_RUNS, Math.max(1, Math.floor(Number(document.getElementById("runs").value || 3)) || 3))),
           comport: document.getElementById("comport").value || "",
           redo_run: redoRun,
           run_to_redo: redoRun ? runToRedo : null,
@@ -144,6 +144,42 @@
           waveform_frequency: Number(document.getElementById("waveformFrequency")?.value || 1),
           cyclical_cycle_count: Math.max(1, Number(document.getElementById("cyclicalCycleCount")?.value || 28800)),
         };
+      }
+
+      // populate the Run-to-Redo dropdown with ONLY the active (redoable) runs.
+      // A run already superseded by a redo never appears here.
+      function setRunToRedoOptions(runs) {
+        const sel = document.getElementById("runToRedo");
+        if (!sel) return;
+        const runsArr = (runs || []).map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b);
+        sel.dataset.availableRuns = runsArr.join(",");
+        sel.innerHTML = `<option value="">Select run…</option>` +
+          runsArr.map((n) => `<option value="${n}">Run ${n}</option>`).join("");
+        sel.value = "";
+      }
+
+      // Start Test gate: require a live Zaber on a real rig; stay soft in simulation
+      // (no real load-cell driver) so dev/demo runs still work. Returns true if the
+      // run may proceed, false if it was hard-blocked.
+      async function zaberStartGateOk() {
+        const status = await callApi("/api/connection-check", {});
+        if (!status) return true;                  // backend hiccup - don't hard-block
+        if (status.connected === true) return true;
+        if (status.connection_lost === true) {     // real rig lost its actuator: hard block
+          showErrorDialog(
+            "The actuator connection was lost. Reconnect the Zaber (re-select the COM port) " +
+            "and wait for it to confirm before starting the test.",
+            "Reconnect the Zaber first");
+          return false;
+        }
+        if (status.simulation === true) {          // simulation machine: soft
+          setMainMessage("No Zaber connected - running in simulation mode.", "");
+          return true;
+        }
+        showErrorDialog(
+          "No Zaber is connected. Select the COM port and make sure it connects before starting the test.",
+          "Connect a Zaber first");
+        return false;
       }
 
       // keep the run fields in the right state for em, shear, and redo mode.
@@ -230,7 +266,7 @@
         }
       }
 
-      // analyze a folder of already-saved run files directly — no test run, no
+      // analyze a folder of already-saved run files directly - no test run, no
       // hardware, no input stream. Pick a test folder that contains FUT/ and CAP/
       // (e.g. the bundled sample_data/03 09 26_325mm2_EM), then run the real EM
       // analysis on it and open the results with the matplotlib figures.
@@ -254,16 +290,16 @@
         }
 
         // The folder must follow the analysis-output pattern:
-        //   {MM DD YY}_{SurfaceArea}mm2_{TestType}   (TestType = EM | Shear | Manual,
-        //   optional _1/_2/... version suffix). Fatigue has no analysis folder.
-        // Validate up front so a wrong pick shows a pop-up immediately — no loading.
+        //   {MM DD YY}_{SurfaceArea}mm2_{TestType}   (TestType = EM | Shear |
+        //   Manual | Fatigue, optional _1/_2/... version suffix).
+        // Validate up front so a wrong pick shows a pop-up immediately - no loading.
         const folderName = (folder.split("/").filter(Boolean).pop() || "");
-        if (!/^\d{2} \d{2} \d{2}_[\d.]+mm2_(EM|Shear|Manual)(?:_\d+)?$/i.test(folderName)) {
+        if (!/^\d{2} \d{2} \d{2}_[\d.]+mm2_(EM|Shear|Manual|Fatigue)(?:_\d+)?$/i.test(folderName)) {
           showErrorDialog(
             `"${escapeHtml(folderName)}" isn't a valid analysis folder.\n\n` +
             `<strong>Expected:</strong>   MM DD YY_&lt;area&gt;mm2_&lt;TestType&gt;\n` +
             `<strong>Example:</strong>    03 09 26_325mm2_EM\n\n` +
-            `TestType must be EM, Shear, or Manual. Fatigue has no analysis folder.`,
+            `TestType must be EM, Shear, Manual, or Fatigue.`,
             "Cannot analyze this folder",
             true
           );
@@ -314,7 +350,10 @@
         }
         setMainMessage(result.message || "Analysis complete.");
         const analysis = result.analysis || null;
-        if (testType === "Shear") {
+        if (testType === "Fatigue") {
+          populateFatigueAnalysis(analysis);
+          fatigueAnalysisModal.showModal();
+        } else if (testType === "Shear") {
           populateShearAnalysis(analysis);
           shearAnalysisModal.showModal();
         } else if (testType === "Manual") {
@@ -373,11 +412,10 @@
         if (resetRedo) {
           redoRunInput.checked = false;
           redoRunInput.dataset.lockedByExistingFolder = "";
-          runToRedoInput.value = "";
-          runToRedoInput.dataset.availableRuns = "";
+          setRunToRedoOptions([]);
           document.getElementById("testType").disabled = false;
         } else if (redoRunInput.dataset.lockedByExistingFolder !== "true") {
-          runToRedoInput.dataset.availableRuns = "";
+          setRunToRedoOptions([]);
         }
         updateFolderInfoTag();
       }
@@ -547,8 +585,7 @@
         redoRunInput.checked = false;
         redoRunInput.disabled = false;
         redoRunInput.dataset.lockedByExistingFolder = "";
-        document.getElementById("runToRedo").value = "";
-        document.getElementById("runToRedo").dataset.availableRuns = "";
+        setRunToRedoOptions([]);
         document.getElementById("testType").disabled = false;
         testConfig.querySelectorAll("input, select, button").forEach((element) => {
           if (element.id !== "beginButton") element.blur();
@@ -568,8 +605,7 @@
           redoRunInput.checked = false;
           redoRunInput.dataset.lockedByExistingFolder = "";
           document.getElementById("testType").disabled = false;
-          runToRedoInput.value = "";
-          runToRedoInput.dataset.availableRuns = "";
+          setRunToRedoOptions([]);
           updateTestConfigState();
           setMainMessage(`new versioned test folder selected: ${conflict.versioned_folder}`, "ok");
           return true;
@@ -590,14 +626,13 @@
           saveFolderInput.dataset.existingTestAction = "redo";
           redoRunInput.checked = true;
           redoRunInput.dataset.lockedByExistingFolder = "true";
-          runToRedoInput.value = "";
-          runToRedoInput.dataset.availableRuns = availableRuns.join(",");
+          setRunToRedoOptions(availableRuns);
           updateTestConfigState();
           setMainMessage(`redo a run will be checked by default. Existing runs: ${availableRuns.join(", ")}.`, "ok");
           return true;
         }
 
-        // (overwrite removed — data is never overwritten; redo creates a new run.)
+        // (overwrite removed - data is never overwritten; redo creates a new run.)
 
         cancelExistingTestWorkflow();
         return false;
@@ -659,8 +694,7 @@
           if (saveFolderInput.dataset.existingTestAction !== "redo") {
             redoRunInput.checked = false;
             redoRunInput.dataset.lockedByExistingFolder = "";
-            document.getElementById("runToRedo").value = "";
-            document.getElementById("runToRedo").dataset.availableRuns = "";
+            setRunToRedoOptions([]);
             document.getElementById("runs").value = 3;
             document.getElementById("testType").disabled = false;
           }
@@ -722,6 +756,33 @@
             return;
           }
         }
+        // surface area is used in the folder name and the pressure calculation,
+        // so it must be a positive number for every test type.
+        const surfaceAreaRaw = (document.getElementById("surfaceArea").value || "").trim();
+        const surfaceAreaValue = Number(surfaceAreaRaw);
+        if (!surfaceAreaRaw) {
+          setMainMessage("Fill in the surface area before continuing.", "error");
+          return;
+        }
+        if (!Number.isFinite(surfaceAreaValue) || surfaceAreaValue <= 0) {
+          setMainMessage("Surface area must be a positive number.", "error");
+          return;
+        }
+        // EM runs each a full press cycle; require a whole number from 1 to
+        // MAX_EM_RUNS so a typo (e.g. 100) can't kick off an enormous test. Redo
+        // mode and single-dataset tests (Shear/Manual/Fatigue) always use 1 run.
+        if (cfg.test_type === "EM" && !cfg.redo_run) {
+          const runsRaw = (document.getElementById("runs").value || "").trim();
+          const runsValue = Number(runsRaw);
+          if (!runsRaw || !Number.isFinite(runsValue) || !Number.isInteger(runsValue) || runsValue < 1) {
+            setMainMessage("Number of runs must be a whole number of at least 1.", "error");
+            return;
+          }
+          if (runsValue > MAX_EM_RUNS) {
+            setMainMessage(`Number of runs can be at most ${MAX_EM_RUNS}.`, "error");
+            return;
+          }
+        }
         if (cfg.test_type === "EM" || cfg.test_type === "Manual" || cfg.test_type === "Fatigue") {
           // A COM port must be selected to run a Zaber-driven test.
           // TODO (future): require a SUCCESSFUL connection (connected === true), not
@@ -729,10 +790,6 @@
           // we only surface the connection error when a port fails to connect.
           if (!cfg.comport) {
             setMainMessage("Select a COM port before continuing.", "error");
-            return;
-          }
-          if (!cfg.surface_area) {
-            setMainMessage("Fill in the surface area before continuing.", "error");
             return;
           }
         }
@@ -788,17 +845,40 @@
         drawCyclicalPreview();
       }
 
-      function openCalibration() {
+      async function openCalibration() {
+        // Open Calibration is gated like START: the window only opens if the Zaber
+        // initializes. On a sim-only machine it opens with a simulation notice; on
+        // a real rig with no connection it stays closed (no point opening a window
+        // whose every control needs hardware).
+        const status = await callApi("/api/connection-check", {});
+        if (status && status.connected !== true && status.simulation !== true) {
+          showErrorDialog(
+            `Could not connect to the Zaber actuator on ${document.getElementById("comport").value || "the selected COM port"}. Check the connection and try again.`,
+            "Connect a Zaber first");
+          return;
+        }
         initializeCalibrationSettings();
         setPositionReadout(17);
         calibrationModal.showModal();
+        // window-specific notice belongs in the calibration window itself.
+        if (status && status.simulation === true && status.connected !== true) {
+          addCalibrationUpdate("No Zaber connected - calibration running in simulation mode.");
+        }
       }
 
-      function homeAxis() {
-        setPositionReadout(17);
+      async function homeAxis() {
+        if (calibrationMoveInFlight) return;
         setForceReadout(0);
-        addCalibrationUpdate("reset to home position.");
-        callApi("/api/home", {}, "Manual control: Returning to HOME position");
+        addCalibrationUpdate("returning to home position…");
+        calibrationMoveInFlight = true;
+        try {
+          const result = await callApi("/api/home", {}, "Manual control: Returning to HOME position");
+          // update the readout only once the stage has reached home.
+          setPositionReadout(result && typeof result.position === "number" ? result.position : 17);
+          addCalibrationUpdate("at home position.");
+        } finally {
+          calibrationMoveInFlight = false;
+        }
       }
 
       // ask python for the live serial ports and rebuild the COM port dropdown,
@@ -825,7 +905,7 @@
         select.value = (previous && ports.includes(previous)) ? previous : "";
         updateComPortPlaceholder();
         updateFolderInfoTag();
-        // do NOT auto-connect on load — only connect once the user picks a port.
+        // do NOT auto-connect on load - only connect once the user picks a port.
       }
 
       // gray out the dropdown while it shows the "Select COM port" placeholder.
@@ -842,10 +922,11 @@
         if (!select || !select.value) return;
         const result = await callApi("/api/connect", { comport: select.value });
         if (!result) return;
-        // selecting a port connects immediately; if nothing answers, tell the
-        // user to switch to a different COM port.
+        // selecting a port connects immediately and surfaces the result right
+        // here (with the specific failure reason from ZaberCLI.last_error), so the
+        // user gets feedback on the config page instead of waiting until START.
         if (result.connected === false) {
-          setMainMessage(`Couldn't connect to a Zaber on ${select.value}. Try a different COM port.`, "error");
+          setMainMessage(result.message || `Couldn't connect to a Zaber on ${select.value}. Try a different COM port.`, "error");
         } else if (result.connected === true) {
           setMainMessage(result.message || `Connected to Zaber on ${select.value}.`, "");
         } else if (announce && result.message) {
@@ -864,7 +945,7 @@
           const body = new Blob([JSON.stringify({})], { type: "application/json" });
           navigator.sendBeacon(apiUrl("/api/stop"), body);
         } catch (error) {
-          // best effort — nothing else we can do during unload.
+          // best effort - nothing else we can do during unload.
         }
       });
 
@@ -920,6 +1001,23 @@
           setManualState("READY", `warning: ${value.toFixed(1)} N exceeds the actuator's ${ACTUATOR_PEAK_THRUST_N} N peak thrust and may not be reachable.`);
         }
       });
+      // decimal-input fields: allow free typing of decimals, then snap to the
+      // field's precision and range on commit (change/blur). [id, min, max, decimals]
+      [
+        ["cyclicalLowerForce", 0, 32, 1],
+        ["cyclicalUpperForce", 0, 32, 1],
+        ["manualTargetForce", 0, 32, 1],
+        ["manualActuatorSpeed", 0.01, 2, 3],
+        ["waveformFrequency", 0.01, 5, 2],
+        ["manualIncrementDistance", 0.01, 15, 2],
+        ["incrementDistance", 0.01, 15, 2],
+      ].forEach(([id, min, max, dec]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const snap = () => normalizeNumberField(id, min, max, dec);
+        el.addEventListener("change", snap);
+        el.addEventListener("blur", snap);
+      });
       ["waveformType", "cyclicalLowerForce", "cyclicalUpperForce", "waveformFrequency", "cyclicalCycleCount"].forEach((id) => {
         document.getElementById(id).addEventListener("input", () => {
           updateTestConfigState();
@@ -934,23 +1032,12 @@
         document.getElementById(id).addEventListener("input", invalidateBasicSettings);
         document.getElementById(id).addEventListener("change", invalidateBasicSettings);
       });
-      document.getElementById("runToRedo").addEventListener("input", () => {
-        const rawValue = document.getElementById("runToRedo").value;
-        const value = Number(rawValue);
-        if (rawValue === "") {
-          setMainMessage("redo a run will be checked by default.", "ok");
-        } else if (!Number.isInteger(value) || value < 1) {
-          setMainMessage("run to redo must be a positive whole number.", "error");
+      document.getElementById("runToRedo").addEventListener("change", () => {
+        const value = document.getElementById("runToRedo").value;
+        if (!value) {
+          setMainMessage("pick which run to redo.", "ok");
         } else {
-          const availableRuns = (document.getElementById("runToRedo").dataset.availableRuns || "")
-            .split(",")
-            .filter(Boolean)
-            .map(Number);
-          if (availableRuns.length && !availableRuns.includes(value)) {
-            setMainMessage(`run ${value} does not exist in this test folder. Existing runs: ${availableRuns.join(", ")}.`, "error");
-          } else if (document.getElementById("redoRun").checked) {
-            setMainMessage("redo mode will repeat only the selected run.");
-          }
+          setMainMessage(`redo mode will create a new run that supersedes run ${value}.`);
         }
       });
 

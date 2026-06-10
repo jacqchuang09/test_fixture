@@ -1,4 +1,4 @@
-# Manual analysis — matplotlib figures for a single manual test run.
+# Manual analysis - matplotlib figures for a single manual test run.
 #
 # A manual run is a list of recorded points {time, force, capacitance}. This
 # produces the same three views the app shows, styled to match the EM/Shear

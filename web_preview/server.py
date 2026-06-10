@@ -127,8 +127,33 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/connect":
             return STATE.connect_zaber(comport)
 
+        if path == "/api/connection-check":
+            # Start Test gate: report whether a real Zaber is live, and whether
+            # this is a simulation-only machine (no real load-cell driver), so the
+            # UI can hard-block on a real rig but stay soft in simulation.
+            import os
+            import futek_cli
+            connected = (STATE.cli is not None) and (not STATE.simulated)
+            simulation = bool(os.environ.get("FORCE_SIM")) or (not getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False))
+            return {"ok": True, "connected": connected, "simulation": simulation,
+                    "connection_lost": bool(STATE.connection_lost), "comport": STATE.comport}
+
+        if path == "/api/zaber-reconnect":
+            # live reconnect watcher: try to reopen the last known port after a
+            # disconnect. On success the actuator is re-homed (its position was
+            # unknown after the comms loss) so the next run starts from baseline.
+            result = STATE.try_reconnect()
+            if result.get("connected"):
+                home = STATE.home(STATE.comport)
+                result["rehomed"] = bool(home.get("ok"))
+                result["position"] = home.get("position")
+            return result
+
         if path == "/api/move":
-            return STATE.move(comport, float(payload.get("distance", 0)))
+            # force-monitored stepped jog: halts mid-move if the load cell crosses
+            # the ceiling, so a manual press can't crush the sensor or fixture.
+            from run_engine import ENGINE
+            return ENGINE.manual_move(float(payload.get("distance", 0)))
 
         if path == "/api/home":
             return STATE.home(comport)
@@ -179,7 +204,10 @@ class Handler(SimpleHTTPRequestHandler):
             import run_log
             from run_engine import ENGINE
             test_folder = self.test_folder_for_payload(payload)
-            test_folder.mkdir(parents=True, exist_ok=True)
+            ok_folder, folder_err = self._ensure_folder(test_folder)
+            if not ok_folder:
+                return {"ok": False, "message": folder_err}
+            self._write_test_meta(test_folder, payload)
             surface_area = self._float_from_text(payload.get("surface_area"), default=325.0)
             log = run_log.load(test_folder)
             redo_of = payload.get("redo_of")
@@ -192,6 +220,27 @@ class Handler(SimpleHTTPRequestHandler):
                 run_number = int(payload.get("run_number") or run_log.next_run_number(log))
             ok, message = ENGINE.start(run_number, test_folder, surface_area, redo_of=redo_of, reason=reason)
             return {"ok": ok, "message": message, "run_number": run_number, "test_folder": str(test_folder)}
+
+        if path == "/api/start-cyclical":
+            # run the fatigue (cyclical) test on the real Zaber+FUTEK (or the
+            # coupled simulator on a machine without the rig). The UI polls
+            # /api/run-status for live force/cycle/position.
+            from run_engine import ENGINE
+            test_folder = self.test_folder_for_payload(payload)
+            ok_folder, folder_err = self._ensure_folder(test_folder)
+            if not ok_folder:
+                return {"ok": False, "message": folder_err}
+            self._write_test_meta(test_folder, payload)
+            surface_area = self._float_from_text(payload.get("surface_area"), default=325.0)
+            params = {
+                "lower_force": self._float_from_text(payload.get("cyclical_lower_force"), default=1.0),
+                "upper_force": self._float_from_text(payload.get("cyclical_upper_force"), default=20.0),
+                "cycle_count": int(self._float_from_text(payload.get("cyclical_cycle_count"), default=1.0) or 1),
+                "frequency": self._float_from_text(payload.get("waveform_frequency"), default=1.0),
+                "waveform": payload.get("waveform_type") or "Sine",
+            }
+            ok, message = ENGINE.start_cyclical(params, test_folder, surface_area)
+            return {"ok": ok, "message": message, "test_folder": str(test_folder)}
 
         if path == "/api/run-status":
             from run_engine import ENGINE
@@ -209,10 +258,67 @@ class Handler(SimpleHTTPRequestHandler):
                 "redos": run_log.reason_rows(log),
             }
 
+        if path == "/api/save-plot-png":
+            # save an interactive-plot PNG sent from the embedded Plotly view. We
+            # save server-side (instead of a browser download) so the embedded view
+            # never navigates away from the interactive plot.
+            import base64
+            data_url = payload.get("data") or ""
+            html_path = (payload.get("html_path") or "").strip()
+            name = re.sub(r"[^A-Za-z0-9_.-]+", "_", (payload.get("name") or "plot")) or "plot"
+            b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
+            try:
+                raw = base64.b64decode(b64)
+            except Exception:
+                return {"ok": False, "message": "Could not decode the image."}
+            # save next to the Analysis_Plots.html (the test folder); fall back to ~/Downloads.
+            folder = Path(html_path).expanduser().parent if html_path else (Path.home() / "Downloads")
+            try:
+                folder.mkdir(parents=True, exist_ok=True)
+                out = folder / f"{name}_plot.png"
+                counter = 1
+                while out.exists():
+                    out = folder / f"{name}_plot_{counter}.png"
+                    counter += 1
+                out.write_bytes(raw)
+                return {"ok": True, "filename": out.name, "path": str(out)}
+            except OSError as exc:
+                return {"ok": False, "message": f"Could not save the PNG: {exc}"}
+
         if path == "/api/fuji-film":
-            return False, "Fuji Film test needs the FUTEK runtime/driver available to Python."
+            # calibration press: drive the actuator to the 20 N target while
+            # streaming live force. The UI polls /api/run-status.
+            from run_engine import ENGINE
+            surface_area = self._float_from_text(payload.get("surface_area"), default=325.0)
+            ok, message = ENGINE.start_fuji_film(surface_area)
+            return {"ok": ok, "message": message}
 
         return False, f"Unknown API route: {path}"
+
+    def _ensure_folder(self, folder):
+        # create the save/test folder, failing gracefully (e.g. the default/root
+        # save folder does not exist or is not writable) instead of crashing.
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            return True, None
+        except OSError as exc:
+            reason = getattr(exc, "strerror", None) or str(exc)
+            return False, (f"Could not create the save folder: {folder}. "
+                           f"Check that the location exists and is writable ({reason}).")
+
+    def _write_test_meta(self, test_folder, payload):
+        # record the test configuration (esp. sensor type) so Analyze Saved Data
+        # re-analyzes with the same channel order, not the current UI selection.
+        try:
+            meta = {
+                "sensor_id": payload.get("sensor_id") or "",
+                "sensor_type": payload.get("sensor_type") or "Standard",
+                "test_type": payload.get("test_type") or "EM",
+                "surface_area": payload.get("surface_area") or "",
+            }
+            (Path(test_folder) / "test_meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     def test_folder_for_payload(self, payload):
         # a normal save folder is the base drive folder; tests live under sensor/date folders.
@@ -360,12 +466,18 @@ class Handler(SimpleHTTPRequestHandler):
         }
 
     def available_run_numbers(self, folder):
-        # use both fut and cap filenames so redo mode can verify the selected run exists.
+        # runs the user may redo: ACTIVE (non-superseded) runs only. Uses fut+cap
+        # filenames, then intersects with the run log's active runs so a run that
+        # was already superseded by a redo cannot be redone again.
         run_numbers = set()
         for path in list((folder / "FUT").glob("*.xlsx")) + list((folder / "FUT").glob("*.csv")) + list((folder / "CAP").glob("*.csv")):
             match = re.search(r"run\D*(\d+)", path.name, flags=re.IGNORECASE)
             if match:
                 run_numbers.add(int(match.group(1)))
+        import run_log
+        log = run_log.load(folder)
+        if log.get("runs"):
+            run_numbers &= set(run_log.active_runs(log))
         return sorted(run_numbers)
 
     def start_test(self, payload):
@@ -386,6 +498,7 @@ class Handler(SimpleHTTPRequestHandler):
         cap_folder = test_folder / "CAP"
         fut_folder.mkdir(parents=True, exist_ok=True)
         cap_folder.mkdir(parents=True, exist_ok=True)
+        self._write_test_meta(test_folder, payload)
 
         test_type = self.test_type_code(payload.get("test_type") or "EM")
         if test_type == "Shear" and payload.get("shear_readings"):
@@ -400,13 +513,14 @@ class Handler(SimpleHTTPRequestHandler):
             self.write_reading_cap(cap_folder / "Run 1.csv", readings)
             return
 
-        # Only fabricate synthetic preview run files when the folder has no real
-        # run data yet. This keeps the no-hardware demo working (empty folder ->
-        # generate fake data to analyze) while preserving genuine FUT/CAP captures
-        # so the real analysis engine can run on them instead of clobbering them.
+        # Only fabricate synthetic preview run files when the folder has NO real
+        # run data yet (the empty-folder, no-hardware demo). If real FUT files
+        # already exist - e.g. the run engine captured them, even in simulation
+        # where there's FUT but no CAP - never fabricate. Fabricating a lone
+        # synthetic CAP/Run 1 here made the real engine run on only run 1 and hid
+        # every other (active) run, including a redo's new run.
         existing_fut = list(fut_folder.glob("*.csv")) + list(fut_folder.glob("*.xlsx"))
-        existing_cap = list(cap_folder.glob("*.csv"))
-        if existing_fut and existing_cap:
+        if existing_fut:
             return
 
         redo_run = bool(payload.get("redo_run"))
@@ -529,19 +643,33 @@ class Handler(SimpleHTTPRequestHandler):
 
         if payload.get("analyze_existing"):
             # "Analyze Saved Data": use the chosen folder as-is. Validate that it
-            # actually holds run data and never fabricate synthetic files — if the
+            # actually holds run data and never fabricate synthetic files - if the
             # folder is wrong, return a clear error so the UI can stop.
-            fut_files = list((test_folder / "FUT").glob("*.xlsx")) + list((test_folder / "FUT").glob("*.csv"))
-            cap_files = list((test_folder / "CAP").glob("*.csv"))
-            if not fut_files or not cap_files:
-                return {
-                    "ok": False,
-                    "message": (
-                        f"Couldn't read test data from {test_folder}. Pick the test "
-                        "folder itself — the one that contains FUT/ (force run files) "
-                        "and CAP/ (capacitance run files) subfolders."
-                    ),
-                }
+            if str(payload.get("test_type") or "EM") == "Fatigue":
+                # fatigue has no FUT/CAP runs - it stores a single Force-vs-Time
+                # stream (Fatigue_Data.xlsx or .csv) plus a small stats summary.
+                fatigue_files = list((test_folder).glob("Fatigue_Data.xlsx")) + list((test_folder).glob("Fatigue_Data.csv"))
+                if not fatigue_files:
+                    return {
+                        "ok": False,
+                        "message": (
+                            f"Couldn't read fatigue data from {test_folder}. Pick the "
+                            "test folder itself - the one that contains Fatigue_Data.xlsx "
+                            "(or Fatigue_Data.csv)."
+                        ),
+                    }
+            else:
+                fut_files = list((test_folder / "FUT").glob("*.xlsx")) + list((test_folder / "FUT").glob("*.csv"))
+                cap_files = list((test_folder / "CAP").glob("*.csv"))
+                if not fut_files or not cap_files:
+                    return {
+                        "ok": False,
+                        "message": (
+                            f"Couldn't read test data from {test_folder}. Pick the test "
+                            "folder itself - the one that contains FUT/ (force run files) "
+                            "and CAP/ (capacitance run files) subfolders."
+                        ),
+                    }
         else:
             self.prepare_test_folder(payload, test_folder)
 

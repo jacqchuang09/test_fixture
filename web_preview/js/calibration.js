@@ -1,5 +1,5 @@
 /*
- * calibration.js — Calibration / Fuji film window.
+ * calibration.js - Calibration / Fuji film window.
  *
  * Owns the calibration modal: incremental jog moves, the Fuji film
  * pressure-paper test, and the calibration status log.
@@ -66,46 +66,65 @@
         manualMove(signedDistance);
       }
 
-      function beginFujiFilmTest() {
+      async function beginFujiFilmTest() {
         const button = document.getElementById("fujiFilmButton");
-        clearInterval(fujiTimer);
+        if (fujiTimer) return;
+        // Fuji film drives the actuator + load cell to a 20 N target. Require a
+        // live Zaber on a real rig (soft in simulation).
+        if (!(await zaberStartGateOk())) return;
         setForceReadout(0);
-        fujiStartedAt = performance.now();
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         button.disabled = true;
         document.getElementById("calibrationCloseButton").disabled = true;
         button.textContent = "Pushing... Target: 20 N";
 
-        fujiTimer = setInterval(() => {
-          try {
-            const elapsedSeconds = (performance.now() - fujiStartedAt) / 1000;
-            const nextForce = Math.min(20, currentForce + 0.3 + Math.random() * 0.25);
-            const forceJump = nextForce - currentForce;
+        const finish = (text) => {
+          if (fujiTimer) { clearInterval(fujiTimer); fujiTimer = null; }
+          button.disabled = false;
+          document.getElementById("calibrationCloseButton").disabled = false;
+          button.textContent = "▶ Start Fuji Film Test";
+          if (text) addCalibrationUpdate(text);
+        };
 
-            if (forceJump > 5 || !Number.isFinite(nextForce)) {
-              throw new Error("force spike detected.");
-            }
+        const surfaceArea = `${document.getElementById("surfaceArea")?.value || 325}mm2`;
+        const result = await callApi("/api/fuji-film", { surface_area: surfaceArea });
+        if (!result || !result.ok) {
+          finish(`ERROR: ${(result && result.message) || "could not start Fuji Film Test."}`);
+          return;
+        }
 
-            setForceReadout(nextForce);
-            calibrationLines.push(`${elapsedSeconds.toFixed(3)} s | ${nextForce.toFixed(1)} N`);
-            document.getElementById("calibrationLog").textContent = calibrationLines.join("\n");
-            document.getElementById("calibrationLog").scrollTop = document.getElementById("calibrationLog").scrollHeight;
-
-            if (nextForce >= 20) {
-              clearInterval(fujiTimer);
-              fujiTimer = null;
-              button.disabled = false;
-              document.getElementById("calibrationCloseButton").disabled = false;
-              button.textContent = "▶ Start Fuji Film Test";
-              addCalibrationUpdate("Fuji Film Test Completed Successfully.");
-            }
-          } catch (error) {
-            clearInterval(fujiTimer);
-            fujiTimer = null;
-            button.disabled = false;
-            document.getElementById("calibrationCloseButton").disabled = false;
-            button.textContent = "▶ Start Fuji Film Test";
-            addCalibrationUpdate(`ERROR: ${error.message || "Fuji Film Test stopped due to force error."}`);
+        // poll the backend press for live force/time and react to completion.
+        fujiTimer = setInterval(async () => {
+          const status = await callApi("/api/run-status");
+          if (!status || !status.ok) return;
+          const force = Number(status.force || 0);
+          const elapsed = Number(status.elapsed || 0);
+          if (status.status === "running" || status.status === "completed") {
+            setForceReadout(force);
+            calibrationLines.push(`${elapsed.toFixed(3)} s | ${force.toFixed(1)} N`);
+            const log = document.getElementById("calibrationLog");
+            log.textContent = calibrationLines.join("\n");
+            log.scrollTop = log.scrollHeight;
           }
-        }, 10);
+          if (status.status === "completed") {
+            finish(status.message || "Fuji Film Test Completed Successfully.");
+          } else if (status.status === "error" || status.status === "stopped") {
+            finish(status.message || "Fuji Film Test stopped.");
+            if (status.disconnect) {
+              // hard-block the Start button until the actuator reconnects; watch live.
+              const button = document.getElementById("fujiFilmButton");
+              button.disabled = true;
+              addCalibrationUpdate("Actuator connection lost. Reconnect the Zaber to continue.");
+              startReconnectWatch(() => {
+                button.disabled = false;
+                addCalibrationUpdate("Zaber reconnected and re-homed. You can continue.");
+              });
+            } else if (status.safety_stop) {
+              // safety trip: the engine already stopped and homed. Dialog, then
+              // restart the Fuji Film test on Continue.
+              addCalibrationUpdate(status.message || "Fuji Film Test stopped for safety.");
+              showSafetyStopDialog(status.message, () => beginFujiFilmTest());
+            }
+          }
+        }, 100);
       }

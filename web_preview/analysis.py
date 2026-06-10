@@ -15,6 +15,7 @@ from config import ROOT
 from hardware import load_cell_force
 
 
+
 class SavedTestAnalyzer:
     # read saved fut/cap files and write lightweight analysis outputs.
     # this is currently a preview analysis layer, but it uses the same folder/files
@@ -22,20 +23,47 @@ class SavedTestAnalyzer:
     def __init__(self, payload, test_folder):
         self.payload = payload
         self.test_folder = Path(test_folder).expanduser()
-        self.sensor_id = payload.get("sensor_id") or self.test_folder.name or "selected sensor"
+        # prefer the configuration recorded at test time (test_meta.json) so a saved
+        # test re-analyzes with the same sensor + channel order, not the current UI
+        # selection. Fall back to the payload, then sensible defaults.
+        meta = self._read_test_meta()
+        self.sensor_id = meta.get("sensor_id") or payload.get("sensor_id") or self.test_folder.name or "selected sensor"
         self.surface_area = self._float_from_text(payload.get("surface_area"), default=325.0)
-        self.sensor_type = payload.get("sensor_type") or "Standard"
+        self.sensor_type = (
+            meta.get("sensor_type") if meta.get("sensor_type") in ("Standard", "Inverted")
+            else (payload.get("sensor_type") or "Standard")
+        )
         self.analysis_folder = self.test_folder
+
+    def _read_test_meta(self):
+        meta_path = self.test_folder / "test_meta.json"
+        if meta_path.is_file():
+            try:
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return data
+            except (OSError, ValueError):
+                pass
+        return {}
 
     def run(self):
         # main analysis entry point. it gathers fut/cap data, calculates stats,
         # writes plots/tables, then returns a summary object back to the browser.
+        if str(self.payload.get("test_type") or "EM") == "Fatigue":
+            return self._run_fatigue_analysis()
         fut_files = self._find_files("FUT", "*.xlsx") + self._find_files("FUT", "*.csv")
         cap_files = self._find_files("CAP", "*.csv")
         self.analysis_folder.mkdir(parents=True, exist_ok=True)
 
         fut_runs = self._read_fut_runs(fut_files)
         cap_runs = self._read_cap_runs(cap_files)
+        # show only ACTIVE runs: a superseded/redone run's raw data stays on disk
+        # but is never displayed, plotted, or analyzed - it simply isn't shown.
+        active = self._active_runs()
+        if active:
+            keep = set(active)
+            fut_runs = {run: pts for run, pts in fut_runs.items() if run in keep}
+            cap_runs = {run: pts for run, pts in cap_runs.items() if run in keep}
         self._fut_runs = fut_runs   # kept so Manual can rebuild points from files
         self._cap_runs = cap_runs
         readings = self._build_readings(fut_runs)
@@ -49,7 +77,14 @@ class SavedTestAnalyzer:
         # lightweight preview analysis so the demo always produces something.
         em_summary = None
         if test_type not in ("Shear", "Manual"):
-            em_summary = self._run_real_em()
+            # Only run the real (CAP-based) engine when CAP data exists for EXACTLY
+            # the active runs - i.e. every active run has both a FUT and a CAP file.
+            # In simulation there's FUT but no CAP, and a stray/partial CAP (e.g. a
+            # leftover synthetic CAP/Run 1) must not trick the engine into analyzing
+            # a single run and hiding the others. Otherwise fall back to preview,
+            # which renders all active runs from the FUT data.
+            if fut_runs and set(fut_runs.keys()) == set(cap_runs.keys()):
+                em_summary = self._run_real_em()
 
         if em_summary is not None:
             channel_stats = em_summary["channel_stats"]
@@ -69,7 +104,7 @@ class SavedTestAnalyzer:
             outputs = self._write_em_layout(readings, channel_stats, cap_runs, report_output, em_summary)
 
         # the only extra written for every test type: a self-contained interactive
-        # (Plotly) plot of the real data — zoom, pan, hover, annotate, PNG export.
+        # (Plotly) plot of the real data - zoom, pan, hover, annotate, PNG export.
         interactive_html_path = self.analysis_folder / "Analysis_Plots.html"
         interactive_html_path.write_text(self._interactive_plots_html(
             test_type, readings, channel_stats,
@@ -219,6 +254,73 @@ class SavedTestAnalyzer:
             import sys
             print(f"[em-analysis] preview fallback: {exc}", file=sys.stderr)
             return None
+
+    def _run_fatigue_analysis(self):
+        # fatigue has no FUT/CAP runs - it stores a single Force-vs-Time stream
+        # (Fatigue_Data) plus a small Fatigue_Stats summary.
+        self.analysis_folder.mkdir(parents=True, exist_ok=True)
+        rows = []   # (time, force)
+        xlsx = self.test_folder / "Fatigue_Data.xlsx"
+        if xlsx.is_file():
+            for row in self._read_xlsx_numeric_rows(xlsx)[1:]:
+                if len(row) >= 3:
+                    t, f = self._safe_float(row[2]), self._safe_float(row[1])
+                    if t is not None and f is not None:
+                        rows.append((t, f))
+        else:
+            csv_path = self.test_folder / "Fatigue_Data.csv"
+            if csv_path.is_file():
+                with csv_path.open(newline="", errors="ignore", encoding="utf-8") as handle:
+                    reader = csv.reader(handle)
+                    next(reader, None)
+                    for r in reader:
+                        if len(r) >= 3:
+                            t, f = self._safe_float(r[2]), self._safe_float(r[1])
+                            if t is not None and f is not None:
+                                rows.append((t, f))
+        if not rows:
+            return {"ok": False, "message": "No fatigue data found. Expected Fatigue_Data.xlsx (or .csv) in this folder."}
+        step = max(1, len(rows) // 6000)
+        sel = rows[::step]
+        times = [round(t, 4) for t, f in sel]
+        forces = [round(f, 5) for t, f in sel]
+        stats = self._read_fatigue_stats()
+        interactive_html_path = self.analysis_folder / "Analysis_Plots.html"
+        interactive_html_path.write_text(
+            self._interactive_plots_html("Fatigue", [], None, fatigue={"time": times, "force": forces}),
+            encoding="utf-8")
+        return {
+            "ok": True,
+            "message": f"Fatigue analysis complete for {self.sensor_id}. Read {len(rows)} samples.",
+            "analysis": {
+                "sensor_id": self.sensor_id,
+                "test_type": "Fatigue",
+                "engine": "fatigue",
+                "interactive_html": str(interactive_html_path),
+                "fatigue": {"time": times, "force": forces, "stats": stats},
+            },
+        }
+
+    def _read_fatigue_stats(self):
+        stats = {}
+        xlsx = self.test_folder / "Fatigue_Stats.xlsx"
+        if xlsx.is_file():
+            try:
+                for row in self._read_xlsx_numeric_rows(xlsx)[1:]:
+                    if len(row) >= 2 and row[0] is not None:
+                        stats[str(row[0])] = row[1]
+                return stats
+            except Exception:
+                pass
+        csv_path = self.test_folder / "Fatigue_Stats.csv"
+        if csv_path.is_file():
+            with csv_path.open(newline="", errors="ignore", encoding="utf-8") as handle:
+                reader = csv.reader(handle)
+                next(reader, None)
+                for r in reader:
+                    if len(r) >= 2:
+                        stats[r[0]] = r[1]
+        return stats
 
     def _find_files(self, folder_name, pattern):
         # helper for finding saved run files inside FUT or CAP.
@@ -409,9 +511,9 @@ class SavedTestAnalyzer:
             "channel_stats": channel_stats,
         }
 
-    def _interactive_plots_html(self, test_type, readings, channel_stats, em_plots=None, cap_runs=None):
+    def _interactive_plots_html(self, test_type, readings, channel_stats, em_plots=None, cap_runs=None, fatigue=None):
         # build a self-contained interactive html using plotly: zoom, pan, hover,
-        # legend toggling, freehand/shape annotations, and png export — rendering
+        # legend toggling, freehand/shape annotations, and png export - rendering
         # the same real curves as the matplotlib figures.
         cap_runs = cap_runs or {}
 
@@ -471,6 +573,7 @@ class SavedTestAnalyzer:
             "em": em_plots,
             "manual": manual_payload,
             "shear": shear_payload,
+            "fatigue": fatigue,
             "rawTraces": raw_traces,
         }
 
@@ -505,7 +608,7 @@ class SavedTestAnalyzer:
       <li><strong>Switch runs (EM)</strong>: use the <em>Run ▾</em> menu at the top-left of a plot</li>
       <li><strong>Focus on channels</strong>: click a name in the legend to hide or show that series</li>
       <li><strong>Add a comment</strong>: click <em>💬 Add comment</em>, then click a point and type your note; it pins a labeled arrow to that exact spot. Drag it to reposition, double-click the text to edit, or use <em>Clear comments</em> to remove them</li>
-      <li><strong>Export</strong>: click the camera icon (top-right toolbar) to save the current view as a PNG</li>
+      <li><strong>Export</strong>: click the camera icon (top-right toolbar) to save the current view as a PNG (saved next to this file); you stay on the interactive plot</li>
     </ul>
   </div>
   __FALLBACK__
@@ -516,13 +619,46 @@ class SavedTestAnalyzer:
   <div id="plots"></div>
   <script>
     var DATA = __PAYLOAD__;
+    // Save the current plot as a PNG via the backend. A normal browser download
+    // navigates this embedded view away from the interactive plot, so instead we
+    // send the image to the server (it writes the PNG next to this file) and you
+    // stay exactly where you are.
+    function showPlotToast(text) {
+      var el = document.getElementById('plotToast');
+      if (!el) {
+        el = document.createElement('div');
+        el.id = 'plotToast';
+        el.style.cssText = 'position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:#161d29;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:9999;transition:opacity .3s;box-shadow:0 8px 24px rgba(0,0,0,.2);';
+        document.body.appendChild(el);
+      }
+      el.textContent = text;
+      el.style.opacity = '1';
+      clearTimeout(el._t);
+      el._t = setTimeout(function () { el.style.opacity = '0'; }, 2400);
+    }
+    function savePngFromGraph(gd) {
+      Plotly.toImage(gd, { format: 'png', scale: 2 }).then(function (dataUrl) {
+        var htmlPath = new URLSearchParams(window.location.search).get('path') || '';
+        fetch('/api/save-plot-png', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: dataUrl, html_path: htmlPath, name: (DATA.sensorId || 'plot') })
+        }).then(function (r) { return r.json(); }).then(function (res) {
+          showPlotToast(res && res.ok ? ('Saved ' + res.filename) : 'Could not save PNG');
+        }).catch(function () { showPlotToast('Could not save PNG'); });
+      });
+    }
     var config = {
       responsive: true, scrollZoom: true,
-      // only annotations are editable (drag/retype comments) — no title/subtitle/
+      // only annotations are editable (drag/retype comments) - no title/subtitle/
       // axis-title edit placeholders ("Click to enter Plot subtitle" etc.).
       edits: { annotationPosition: true, annotationTail: true, annotationText: true },
-      modeBarButtonsToAdd: ['drawline', 'drawopenpath', 'drawrect', 'drawcircle', 'eraseshape'],
-      toImageButtonOptions: { format: 'png', filename: DATA.sensorId + '_plot', scale: 2 }
+      // replace the default download-camera (which would navigate the view away)
+      // with a save-to-backend camera that keeps you on the interactive page.
+      modeBarButtonsToRemove: ['toImage'],
+      modeBarButtonsToAdd: [
+        { name: 'savePng', title: 'Save plot as PNG', icon: Plotly.Icons.camera, click: function (gd) { savePngFromGraph(gd); } },
+        'drawline', 'drawopenpath', 'drawrect', 'drawcircle', 'eraseshape'
+      ]
     };
     var NEWSHAPE = { line: { color: '#ed6c02' } };
     var commentMode = false;
@@ -558,7 +694,7 @@ class SavedTestAnalyzer:
     function toggleComments(btn) {
       commentMode = !commentMode;
       btn.classList.toggle('on', commentMode);
-      btn.textContent = commentMode ? '💬 Comment mode ON — click a point' : '💬 Add comment';
+      btn.textContent = commentMode ? '💬 Comment mode ON - click a point' : '💬 Add comment';
       document.body.style.cursor = commentMode ? 'crosshair' : '';
     }
     function clearComments() {
@@ -604,23 +740,23 @@ class SavedTestAnalyzer:
         return lay;
       }
 
-      // ===== Raw Signals tab — the three per-channel subplots, each a grid =====
+      // ===== Raw Signals tab - the three per-channel subplots, each a grid =====
       // (1) ΔCAP vs Time
       var rs = [], rsRun = [];
       RUNS.forEach(function (rd, ri) { for (var ci = 0; ci < NCH; ci++) { rs.push({ x: rd.raw.time, y: rd.raw.cap[ci], mode: 'lines', line: { width: 1.4 }, xaxis: 'x' + suf(ci), yaxis: 'y' + suf(ci), visible: ri === 0, showlegend: false }); rsRun.push(ri); } });
-      makePlot('rawGrid', rs, gridLayout(DATA.sensorId + ' — Raw Signals: ΔCAP vs Time', rsRun, 'Time (s)', 'Change in CAP (pF)'));
+      makePlot('rawGrid', rs, gridLayout(DATA.sensorId + ' - Raw Signals: ΔCAP vs Time', rsRun, 'Time (s)', 'Change in CAP (pF)'));
 
-      // (2) Pressure vs Time — one trace per run (pressure is shared across channels)
+      // (2) Pressure vs Time - one trace per run (pressure is shared across channels)
       var ptr = [], ptrRun = [];
       RUNS.forEach(function (rd, ri) { ptr.push({ x: rd.raw.time, y: rd.raw.pressure, mode: 'lines', line: { width: 1.8, color: '#2e9e4f' }, visible: ri === 0, showlegend: false }); ptrRun.push(ri); });
-      makePlot('pressTime', ptr, { title: { text: DATA.sensorId + ' — Raw Signals: Pressure vs Time' }, xaxis: { title: 'Time (s)' }, yaxis: { title: 'Pressure (kPa)' }, hovermode: 'closest', showlegend: false, updatemenus: [{ buttons: gridRunButtons(ptrRun), x: 0, xanchor: 'left', y: 1.16, showactive: true }] });
+      makePlot('pressTime', ptr, { title: { text: DATA.sensorId + ' - Raw Signals: Pressure vs Time' }, xaxis: { title: 'Time (s)' }, yaxis: { title: 'Pressure (kPa)' }, hovermode: 'closest', showlegend: false, updatemenus: [{ buttons: gridRunButtons(ptrRun), x: 0, xanchor: 'left', y: 1.16, showactive: true }] });
 
       // (3) ΔCAP vs Pressure (hysteresis)
       var hy = [], hyRun = [];
       RUNS.forEach(function (rd, ri) { for (var ci = 0; ci < NCH; ci++) { hy.push({ x: rd.raw.pressure, y: rd.raw.cap[ci], mode: 'lines', line: { width: 1.3 }, xaxis: 'x' + suf(ci), yaxis: 'y' + suf(ci), visible: ri === 0, showlegend: false }); hyRun.push(ri); } });
-      makePlot('hystGrid', hy, gridLayout(DATA.sensorId + ' — Raw Signals: ΔCAP vs Pressure (hysteresis)', hyRun, 'Pressure (kPa)', 'Change in CAP (pF)'));
+      makePlot('hystGrid', hy, gridLayout(DATA.sensorId + ' - Raw Signals: ΔCAP vs Pressure (hysteresis)', hyRun, 'Pressure (kPa)', 'Change in CAP (pF)'));
 
-      // ===== Pressure Sensitivity tab — ΔCAP (blue) + 1st derivative (orange, right axis) + inflection =====
+      // ===== Pressure Sensitivity tab - ΔCAP (blue) + 1st derivative (orange, right axis) + inflection =====
       var ps = [], psRun = [], secAxes = {};
       RUNS.forEach(function (rd, ri) {
         for (var ci = 0; ci < NCH; ci++) {
@@ -634,22 +770,22 @@ class SavedTestAnalyzer:
         }
       });
       for (var si = 0; si < NCH; si++) { var sp = suf(si); secAxes['yaxis' + (9 + si)] = { overlaying: 'y' + sp, anchor: 'x' + sp, side: 'right', showgrid: false, tickfont: { color: '#f28c28', size: 8 }, title: { text: '1st deriv (pF/kPa)', font: { size: 8, color: '#f28c28' } } }; }
-      makePlot('psGrid', ps, gridLayout(DATA.sensorId + ' — Pressure Sensitivity: ΔCAP (blue) + 1st derivative (orange), • inflection', psRun, 'Pressure (kPa)', 'Change in CAP (pF)', secAxes));
+      makePlot('psGrid', ps, gridLayout(DATA.sensorId + ' - Pressure Sensitivity: ΔCAP (blue) + 1st derivative (orange), • inflection', psRun, 'Pressure (kPa)', 'Change in CAP (pF)', secAxes));
 
       // ===== All CH/Runs tab =====
       var ac = [], acRun = [];
       RUNS.forEach(function (rd, ri) { for (var ci = 0; ci < NCH; ci++) { var pp = psPoints(rd, ci); ac.push({ x: pp.x, y: pp.y, mode: 'lines', name: 'CH ' + (ci + 1), visible: ri === 0, line: { width: 2 } }); acRun.push(ri); } });
-      makePlot('allChPerRun', ac, { title: { text: DATA.sensorId + ' — All Channels (per run)' }, xaxis: { title: 'Pressure (kPa)' }, yaxis: { title: 'Change in CAP (pF)' }, hovermode: 'closest', updatemenus: [{ buttons: gridRunButtons(acRun), x: 0, xanchor: 'left', y: 1.16, showactive: true }] });
+      makePlot('allChPerRun', ac, { title: { text: DATA.sensorId + ' - All Channels (per run)' }, xaxis: { title: 'Pressure (kPa)' }, yaxis: { title: 'Change in CAP (pF)' }, hovermode: 'closest', showlegend: true, legend: { title: { text: 'click to hide/show' } }, updatemenus: [{ buttons: gridRunButtons(acRun), x: 0, xanchor: 'left', y: 1.16, showactive: true }] });
 
       var ar = [], arCh = [];
       for (var ci = 0; ci < NCH; ci++) { RUNS.forEach(function (rd) { var pp = psPoints(rd, ci); ar.push({ x: pp.x, y: pp.y, mode: 'lines', name: 'Run ' + rd.run, visible: ci === 0, line: { width: 2 } }); arCh.push(ci); }); }
       var chButtons = [];
       for (var cj = 0; cj < NCH; cj++) { (function (cj) { chButtons.push({ label: 'CH ' + (cj + 1), method: 'update', args: [{ visible: arCh.map(function (c) { return c === cj; }) }] }); })(cj); }
-      makePlot('allRunPerCh', ar, { title: { text: DATA.sensorId + ' — All Runs (per channel)' }, xaxis: { title: 'Pressure (kPa)' }, yaxis: { title: 'Change in CAP (pF)' }, hovermode: 'closest', updatemenus: [{ buttons: chButtons, x: 0, xanchor: 'left', y: 1.16, showactive: true }] });
+      makePlot('allRunPerCh', ar, { title: { text: DATA.sensorId + ' - All Runs (per channel)' }, xaxis: { title: 'Pressure (kPa)' }, yaxis: { title: 'Change in CAP (pF)' }, hovermode: 'closest', showlegend: true, legend: { title: { text: 'click to hide/show' } }, updatemenus: [{ buttons: chButtons, x: 0, xanchor: 'left', y: 1.16, showactive: true }] });
     } else if (DATA.manual) {
       function scatter(id, x, y, title, xl, yl, color) {
         makePlot(id, [{ x: x, y: y, mode: 'lines+markers', line: { color: color }, marker: { size: 5 } }],
-          { title: DATA.sensorId + ' — ' + title, xaxis: { title: xl }, yaxis: { title: yl }, hovermode: 'closest' });
+          { title: DATA.sensorId + ' - ' + title, xaxis: { title: xl }, yaxis: { title: yl }, hovermode: 'closest' });
       }
       scatter('mCF', DATA.manual.force, DATA.manual.cap, 'Capacitance vs Force', 'Force (N)', 'Capacitance (pF)', '#3f73e6');
       scatter('mFT', DATA.manual.time, DATA.manual.force, 'Force vs Time', 'Time (s)', 'Force (N)', '#2e9e4f');
@@ -669,7 +805,7 @@ class SavedTestAnalyzer:
       });
       var stitles = [];
       for (var sc = 0; sc < SCH.length; sc++) { var scol = sc % 4, srow = Math.floor(sc / 4); stitles.push({ text: 'CH ' + (sc + 1), x: (scol + 0.5) / 4, y: srow === 0 ? 1.0 : 0.45, xref: 'paper', yref: 'paper', showarrow: false, font: { size: 12, color: '#161d29' }, xanchor: 'center' }); }
-      var slay = { title: { text: DATA.sensorId + ' — Shear: CAP (blue) + ΔCAP (orange) per channel' }, grid: { rows: 2, columns: 4, pattern: 'independent' }, height: 680, hovermode: 'closest', showlegend: false, margin: { t: 80 }, annotations: stitles };
+      var slay = { title: { text: DATA.sensorId + ' - Shear: CAP (blue) + ΔCAP (orange) per channel' }, grid: { rows: 2, columns: 4, pattern: 'independent' }, height: 680, hovermode: 'closest', showlegend: false, margin: { t: 80 }, annotations: stitles };
       for (var ci2 = 0; ci2 < SCH.length; ci2++) {
         var p2 = ssuf(ci2);
         slay['xaxis' + p2] = { title: { text: 'Time (s)', font: { size: 9 } } };
@@ -678,9 +814,12 @@ class SavedTestAnalyzer:
       }
       makePlot('shearGrid', st, slay);
       makePlot('shearForce', [{ x: DATA.shear.force.time, y: DATA.shear.force.force, mode: 'lines', line: { color: '#2e9e4f' }, name: 'Force' }],
-        { title: { text: DATA.sensorId + ' — Shear: Force vs Time' }, xaxis: { title: 'Time (s)' }, yaxis: { title: 'Force (N)' }, hovermode: 'closest' });
+        { title: { text: DATA.sensorId + ' - Shear: Force vs Time' }, xaxis: { title: 'Time (s)' }, yaxis: { title: 'Force (N)' }, hovermode: 'closest' });
+    } else if (DATA.fatigue) {
+      makePlot('fatigueForce', [{ x: DATA.fatigue.time, y: DATA.fatigue.force, mode: 'lines', line: { color: '#2e9e4f' }, name: 'Force' }],
+        { title: { text: DATA.sensorId + ' - Fatigue: Force vs Time' }, xaxis: { title: 'Time (s)' }, yaxis: { title: 'Force (N)' }, hovermode: 'closest' });
     } else {
-      makePlot('rawPlot', DATA.rawTraces, { title: DATA.sensorId + ' — Raw Signals (Force vs Time)', xaxis: { title: 'Time (s)' }, yaxis: { title: 'Force (N)' }, hovermode: 'closest' });
+      makePlot('rawPlot', DATA.rawTraces, { title: DATA.sensorId + ' - Raw Signals (Force vs Time)', xaxis: { title: 'Time (s)' }, yaxis: { title: 'Force (N)' }, hovermode: 'closest' });
     }
   </script>
 </body>
@@ -732,7 +871,7 @@ class SavedTestAnalyzer:
         headers.extend(f"CH{item['channel']} Mean Max kPa" for item in channel_stats)
         headers.extend(f"CH{item['channel']} Mean Max CAP" for item in channel_stats)
         runs_text = ", ".join(str(r) for r in active) if active else "all"
-        row = [self.sensor_id, "PASS", runs_text, redo.get("reason_summary") or "—", str(self.analysis_folder)]
+        row = [self.sensor_id, "PASS", runs_text, redo.get("reason_summary") or "-", str(self.analysis_folder)]
         row.extend(f"{item['ps']['mean']:.3f}" for item in channel_stats)
         row.extend(f"{item['kpa']['mean']:.3f}" for item in channel_stats)
         row.extend(f"{item['cap']['mean']:.3f}" for item in channel_stats)

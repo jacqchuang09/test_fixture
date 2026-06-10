@@ -1,16 +1,16 @@
 /*
- * shared.js — global state, DOM references, and cross-window helpers.
+ * shared.js - global state, DOM references, and cross-window helpers.
  *
  * Loaded FIRST, before every other js/ file, because it declares the
  * top-level variables and element handles that the per-window scripts read
  * at runtime. Nothing here belongs to a single test window.
  *
  * Structure:
- *   1. DOM element handles (modals, status boxes) and live state vars —
+ *   1. DOM element handles (modals, status boxes) and live state vars -
  *      settingsVerified, currentPosition, currentForce, the per-test data
  *      arrays (emReadings, shearData, manualData, cyclicalData) and timers.
  *   2. Actuator limit constants: ACTUATOR_MIN_MM / MAX_MM / PEAK_THRUST_N.
- *   3. graphTooltip — the floating element shared by every SVG hover handler.
+ *   3. graphTooltip - the floating element shared by every SVG hover handler.
  *   4. Generic helpers used across windows:
  *        - status/readout: stamp, setStatePill, setMainMessage,
  *          setPositionReadout, setForceReadout
@@ -51,10 +51,16 @@
       let settingsVerified = false;
       let currentPosition = 17;
       let currentForce = 0;
+      // true while a real Zaber jog/home is in progress; the position readout
+      // updates only after the move finishes, so block overlapping moves.
+      let calibrationMoveInFlight = false;
       let fujiTimer = null;
       let fujiStartedAt = null;
       let calibrationLines = ["[ready] calibration window ready."];
       let emStatusLines = [];
+      // most EM characterizations use 3 runs; cap the count so a typo can't start
+      // an enormous test (each run is a full press cycle). Redo mode uses 1 run.
+      const MAX_EM_RUNS = 10;
       let emCurrentRun = 1;
       let emCompletedRuns = 0;
       let emTotalRuns = 3;
@@ -151,9 +157,13 @@
         };
       }
 
-      function setStatePill(elementOrId, state, message = "") {
+      // variant: "" neutral, "kept" (green, data saved), "discarded" (amber, no
+      // data saved) - so the operator can tell an auto-pause from a user pause.
+      function setStatePill(elementOrId, state, message = "", variant = "") {
         const element = typeof elementOrId === "string" ? document.getElementById(elementOrId) : elementOrId;
         if (!element) return;
+        element.classList.remove("state-kept", "state-discarded");
+        if (variant) element.classList.add(`state-${variant}`);
         element.innerHTML = "";
         const tag = document.createElement("span");
         tag.className = "state-tag";
@@ -167,10 +177,23 @@
         }
       }
 
-      // show setup errors on the main page where the user can see them.
+      // pick where a setup message shows: while the Test Configuration section is
+      // open, messages appear right above it (config-related); otherwise they show
+      // at the top, under Basic Settings.
+      function messageTargetEl() {
+        const cfg = document.getElementById("testConfig");
+        const configEl = document.getElementById("configMessage");
+        return (cfg && configEl && !cfg.classList.contains("hidden")) ? configEl : mainMessageEl;
+      }
+
+      // show setup messages near the relevant box (Basic Settings vs Test Config).
       function setMainMessage(message, kind = "") {
-        mainMessageEl.textContent = message;
-        mainMessageEl.className = `main-message ${kind}`.trim();
+        const el = messageTargetEl();
+        const other = el === mainMessageEl ? document.getElementById("configMessage") : mainMessageEl;
+        // clear the other slot so a message never lingers in both places.
+        if (other) { other.textContent = ""; other.className = "main-message"; }
+        el.textContent = message;
+        el.className = `main-message ${kind}`.trim();
       }
 
       function setPositionReadout(value) {
@@ -184,7 +207,7 @@
       }
 
       function apiUrl(path) {
-        // app only runs through the Python launcher now — no file:// fallback.
+        // app only runs through the Python launcher now - no file:// fallback.
         return window.location.protocol === "file:" ? `http://127.0.0.1:8765${path}` : path;
       }
 
@@ -214,8 +237,8 @@
       }
 
       function closeAnalysisToMain(kind) {
-        const analysisModal = { em: emAnalysisModal, manual: manualAnalysisModal, shear: shearAnalysisModal }[kind];
-        const testModal = { em: emTestModal, manual: manualTestModal, shear: shearTestModal }[kind];
+        const analysisModal = { em: emAnalysisModal, manual: manualAnalysisModal, shear: shearAnalysisModal, fatigue: fatigueAnalysisModal }[kind];
+        const testModal = { em: emTestModal, manual: manualTestModal, shear: shearTestModal, fatigue: cyclicalTestModal }[kind];
         if (analysisModal?.open) analysisModal.close();
         if (testModal?.open) testModal.close();
 
@@ -227,8 +250,7 @@
         redoRunInput.checked = false;
         redoRunInput.disabled = false;
         redoRunInput.dataset.lockedByExistingFolder = "";
-        document.getElementById("runToRedo").value = "";
-        document.getElementById("runToRedo").dataset.availableRuns = "";
+        setRunToRedoOptions([]);
         document.getElementById("testType").disabled = false;
         document.getElementById("testConfig").classList.add("hidden");
         setMainMessage("analysis complete. verify settings again before starting another test.", "ok");
@@ -294,6 +316,27 @@
         else messageEl.textContent = message;
         if (typeof dialog.showModal === "function") dialog.showModal();
         else dialog.setAttribute("open", "");
+      }
+
+      // safety-stop dialog: shows the reason a run was halted (force spike, force
+      // ceiling, or travel limit) with a single Continue button. The actuator has
+      // already stopped and homed; onContinue restarts whatever was running.
+      let safetyStopOnContinue = null;
+      function showSafetyStopDialog(message, onContinue) {
+        const dialog = document.getElementById("safetyStopDialog");
+        const msgEl = document.getElementById("safetyStopMessage");
+        if (!dialog) { if (onContinue) onContinue(); return; }
+        if (msgEl) msgEl.textContent = message || "The test was stopped for safety.";
+        safetyStopOnContinue = onContinue || null;
+        if (typeof dialog.showModal === "function") dialog.showModal();
+        else dialog.setAttribute("open", "");
+      }
+      function runSafetyStopContinue() {
+        const dialog = document.getElementById("safetyStopDialog");
+        if (dialog && dialog.open) dialog.close();
+        const cb = safetyStopOnContinue;
+        safetyStopOnContinue = null;
+        if (cb) cb();
       }
 
       // two-choice confirm dialog; resolves true (confirm) or false (cancel/close).
@@ -371,19 +414,19 @@
           }
           const r = bySuperseded[n];
           const by = r ? `superseded by Run ${r.new_run}` : "superseded";
-          const reason = r && r.reason ? ` — ${escapeRunHtml(r.reason)}` : "";
+          const reason = r && r.reason ? ` - ${escapeRunHtml(r.reason)}` : "";
           return `<li class="run-item superseded"><span class="run-name">Run ${n}</span><span class="run-tag">${by}${reason}</span></li>`;
         }).join("");
         const activeList = (redoInfo.active_runs || []).join(", ");
         return `<div class="run-list-panel">
-            <h3 class="run-list-title">Runs in this test</h3>
+            <h3 class="run-list-title">Runs</h3>
             <ul class="run-list">${items}</ul>
             <p class="run-list-note">Analysis uses the active runs only${activeList ? ` (${activeList})` : ""}. Superseded runs are kept but not analyzed.</p>
           </div>`;
       }
 
       // embed the self-contained interactive (Plotly) plots in the analysis
-      // window's "Interactive" tab — gives in-app zoom/pan/hover and click-to-
+      // window's "Interactive" tab - gives in-app zoom/pan/hover and click-to-
       // comment, served from the same Analysis_Plots.html written to disk.
       function renderInteractivePanel(group, analysis) {
         const panel = document.getElementById(`${group}-interactive`);
@@ -392,6 +435,41 @@
         panel.innerHTML = htmlPath
           ? `<iframe class="analysis-iframe" src="/plot-file?path=${encodeURIComponent(htmlPath)}" title="Interactive plots"></iframe>`
           : `<p class="hint">Interactive plots will appear here after analysis runs.</p>`;
+      }
+
+      // fill the Fatigue analysis window: a summary stats table plus the
+      // interactive Force-vs-Time plot served from the saved Analysis_Plots.html.
+      function populateFatigueAnalysis(analysis) {
+        renderInteractivePanel("fatigue", analysis);
+        const summary = document.getElementById("fatigue-summary");
+        if (!summary) return;
+        const stats = (analysis && analysis.fatigue && analysis.fatigue.stats) || {};
+        const rows = Object.keys(stats).map((key) => [escapeHtml(key), escapeHtml(String(stats[key]))]);
+        summary.innerHTML = rows.length
+          ? `<h3 class="analysis-section-title">Fatigue summary</h3>${statValueTable(rows)}`
+          : `<p class="hint">No fatigue summary found. Expected Fatigue_Stats.xlsx (or .csv) in this folder.</p>`;
+      }
+
+      // live reconnect watcher: after a Zaber disconnect, poll the backend to
+      // reopen the last known port. On success the actuator is re-homed (its
+      // position was unknown after the comms loss) and onReconnect() re-enables the
+      // owning test window. Only one watcher runs at a time.
+      let reconnectWatchTimer = null;
+      function startReconnectWatch(onReconnect) {
+        if (reconnectWatchTimer) return;
+        reconnectWatchTimer = setInterval(async () => {
+          const res = await callApi("/api/zaber-reconnect", {});
+          if (res && res.connected === true) {
+            stopReconnectWatch();
+            if (typeof onReconnect === "function") onReconnect(res);
+          }
+        }, 2000);
+      }
+      function stopReconnectWatch() {
+        if (reconnectWatchTimer) {
+          clearInterval(reconnectWatchTimer);
+          reconnectWatchTimer = null;
+        }
       }
 
       function metricCards(metrics) {
@@ -554,6 +632,23 @@
         return Math.min(32, Math.max(0, Number(value || 0)));
       }
 
+      // snap a numeric input to its allowed precision and range. Runs on
+      // change/blur (when the user commits a value), NOT on every keystroke, so a
+      // partly-typed decimal like "1." is never clobbered mid-edit. decimals = how
+      // many places to keep (e.g. 1 -> 0.1 N, 2 -> 0.01 mm/s).
+      function normalizeNumberField(id, min, max, decimals) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const raw = String(el.value).trim();
+        if (raw === "" || raw === "-" || raw === "." || raw === "-.") return; // mid-edit, leave it
+        let n = Number(raw);
+        if (!Number.isFinite(n)) return;
+        const f = Math.pow(10, decimals);
+        n = Math.round(n * f) / f;                 // round to the allowed precision
+        n = Math.min(max, Math.max(min, n));        // clamp into range
+        el.value = n;
+      }
+
       function formatDuration(seconds) {
         const totalMinutes = Math.max(1, Math.round(seconds / 60));
         const hours = Math.floor(totalMinutes / 60);
@@ -615,15 +710,39 @@
         const data = points.length ? points : [{ [xKey]: 0, [yKey]: 0 }];
         const xValues = data.map((point) => point[xKey]);
         const yValues = data.map((point) => point[yKey]);
-        const xMin = xKey === "time" ? Math.min(...xValues, 0) : Math.min(...xValues);
-        const xMax = xKey === "time" && settings && !settings.cumulativeTime
-          ? xMin + settings.seconds
-          : Math.max(...xValues, xMin + 1);
-        const rawYMin = Math.min(...yValues);
-        const rawYMax = Math.max(...yValues);
-        const yPadding = Math.max(0.5, (rawYMax - rawYMin) * 0.12);
-        const yMin = settings && !settings.autoY && Number.isFinite(settings.yMin) ? settings.yMin : rawYMin - yPadding;
-        const yMax = settings && !settings.autoY && Number.isFinite(settings.yLimit) ? settings.yLimit : rawYMax + yPadding;
+        // axis bounds: when a live graph asks for autoScale, a force axis starts at
+        // 0 and tops out at least at 5 N (like the other force-over-time graphs),
+        // growing with the data, and a capacitance axis tracks a sensible band
+        // around the data. Otherwise honor the fixed yMin / yLimit controls.
+        const autoScale = !!(settings && settings.autoScale);
+        const boundsFor = (key, values) => {
+          const lo = Math.min(...values), hi = Math.max(...values);
+          if (key === "force") return { min: 0, max: Math.max(5, Math.ceil(hi + 0.5)) };
+          if (key === "capacitance") {
+            const pad = Math.max(1, (hi - lo) * 0.15);
+            let min = Math.floor(lo - pad), max = Math.ceil(hi + pad);
+            if (max - min < 5) { const mid = (min + max) / 2; min = mid - 2.5; max = mid + 2.5; }
+            return { min, max };
+          }
+          const pad = Math.max(0.5, (hi - lo) * 0.12);
+          return { min: lo - pad, max: hi + pad };
+        };
+        const xMin = xKey === "time" ? Math.min(...xValues, 0)
+          : (autoScale ? boundsFor(xKey, xValues).min : Math.min(...xValues));
+        const xMax = xKey === "time"
+          ? (settings && !settings.cumulativeTime ? xMin + settings.seconds : Math.max(...xValues, xMin + 1))
+          : (autoScale ? boundsFor(xKey, xValues).max : Math.max(...xValues, xMin + 1));
+        let yMin, yMax;
+        if (autoScale) {
+          const b = boundsFor(yKey, yValues);
+          yMin = b.min; yMax = b.max;
+        } else {
+          const rawYMin = Math.min(...yValues);
+          const rawYMax = Math.max(...yValues);
+          const yPadding = Math.max(0.5, (rawYMax - rawYMin) * 0.12);
+          yMin = settings && !settings.autoY && Number.isFinite(settings.yMin) ? settings.yMin : rawYMin - yPadding;
+          yMax = settings && !settings.autoY && Number.isFinite(settings.yLimit) ? settings.yLimit : rawYMax + yPadding;
+        }
         const xSpan = Math.max(1, xMax - xMin);
         const ySpan = Math.max(1, yMax - yMin);
         const plotWidth = width - padLeft - padRight;

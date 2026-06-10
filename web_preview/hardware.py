@@ -1,11 +1,9 @@
 # Zaber hardware control + the load-cell force polarity helper.
 #
-# The serial connection and device/axis handshake are taken from emilio's
-# zaber-python project (see zaber_cli.ZaberCLI / zaber_cli.py at the repo root):
-# open the serial port with zaber_motion, detect the device, grab axis 1, and
+# pen the serial port with zaber_motion, detect the device, grab axis 1, and
 # unpark it. Real moves are issued on that axis with millimetre units.
 #
-# Port enumeration mirrors emilio's comport combobox, which listed
+# Port enumeration listed
 # serial.tools.list_ports.comports().
 #
 # If no stage answers, or zaber-motion / pyserial are not installed (e.g. on the
@@ -46,19 +44,27 @@ class HardwareState:
         self.cli = None          # live ZaberCLI when connected, else None (simulated)
         self.comport = None
         self.simulated = True
+        self.comms_lost = False  # set True when a live Zaber command fails (disconnect)
+        # set True by the run engine's safe state after a real comms loss, and only
+        # cleared by a SUCCESSFUL reconnect. Lets the Start gate hard-block on a real
+        # rig that lost its actuator (distinct from a dev machine with no hardware).
+        self.connection_lost = False
 
     @property
     def axis(self):
         return self.cli.getAxis() if self.cli is not None else None
 
     def _read_position(self):
+        # heartbeat read during a run. A failure on a live axis means comms were
+        # lost (cable unplugged / stage powered off); flag it so the run loop can
+        # enter its safe state. The position is then UNKNOWN (we keep the last value).
         axis = self.axis
         if axis is None:
             return self.position_mm
         try:
             self.position_mm = float(axis.get_position(_mm_unit()))
         except Exception:
-            pass
+            self.comms_lost = True
         return self.position_mm
 
     def connect_zaber(self, comport):
@@ -90,6 +96,8 @@ class HardwareState:
         if connected:
             self.cli = cli
             self.simulated = False
+            self.comms_lost = False
+            self.connection_lost = False
             self._read_position()
             return {
                 "ok": True, "connected": True, "comport": comport,
@@ -104,32 +112,53 @@ class HardwareState:
             "message": f"Couldn't connect to a Zaber on {comport}.{detail} Try a different COM port, or close any other program using it.",
         }
 
+    def try_reconnect(self):
+        # used by the live reconnect watcher after a disconnect: if the actuator is
+        # already live, report that; otherwise try to reopen the last known port.
+        # Success clears connection_lost (inside connect_zaber).
+        if self.cli is not None and not self.simulated:
+            return {"ok": True, "connected": True, "comport": self.comport,
+                    "message": f"Zaber connected on {self.comport}."}
+        if not self.comport:
+            return {"ok": True, "connected": False, "comport": None,
+                    "message": "No COM port has been selected yet."}
+        return self.connect_zaber(self.comport)
+
     def move(self, comport, distance):
-        # relative jog, matching the gui's incremental move buttons.
+        # relative jog, matching the gui's incremental move buttons. Blocks until
+        # the stage finishes moving (wait_until_idle), then reports the real final
+        # position so the UI can update the readout only once the move is done.
         distance = float(distance)
         axis = self.axis
         if axis is not None:
             try:
-                axis.move_relative(distance, _mm_unit())
+                axis.move_relative(distance, _mm_unit(), wait_until_idle=True)
                 self._read_position()
-                return True, f"Moved Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."
+                return {"ok": True, "position": self.position_mm,
+                        "message": f"Moved Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."}
             except Exception as exc:
-                return False, f"Zaber move failed: {exc}"
+                return {"ok": False, "position": self.position_mm,
+                        "message": f"Zaber move failed: {exc}"}
         self.position_mm += distance
-        return True, f"[sim] Moved simulated Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."
+        return {"ok": True, "position": self.position_mm,
+                "message": f"[sim] Moved simulated Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."}
 
     def home(self, comport):
-        # absolute move back to the working baseline (17 mm).
+        # absolute move back to the working baseline (17 mm). Blocks until the
+        # stage finishes, then reports the real final position.
         axis = self.axis
         if axis is not None:
             try:
-                axis.move_absolute(HOME_MM, _mm_unit())
-                self.position_mm = HOME_MM
-                return True, f"Moved Zaber axis to home/default position: {HOME_MM:g} mm."
+                axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
+                self._read_position()
+                return {"ok": True, "position": self.position_mm,
+                        "message": f"Moved Zaber axis to home/default position: {self.position_mm:.2f} mm."}
             except Exception as exc:
-                return False, f"Zaber home failed: {exc}"
+                return {"ok": False, "position": self.position_mm,
+                        "message": f"Zaber home failed: {exc}"}
         self.position_mm = HOME_MM
-        return True, f"[sim] Moved simulated Zaber axis to home/default position: {HOME_MM:g} mm."
+        return {"ok": True, "position": self.position_mm,
+                "message": f"[sim] Moved simulated Zaber axis to home/default position: {HOME_MM:g} mm."}
 
     def stop(self):
         self.stop_requested = True

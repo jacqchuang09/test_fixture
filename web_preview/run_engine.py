@@ -1,19 +1,10 @@
 # Backend EM test-run engine.
-#
-# This ports Emilio's zaber-python `run_tests` (the real EM press) into a
-# hardware-agnostic loop so the SAME logic runs in two modes:
-#
+
 #   * Real (Windows + rig): drives the Zaber with velocity moves and reads the
 #     live FUTEK load cell, stopping the press at the force limit.
 #   * Simulated (Mac / no hardware): a coupled spring model where pressing
 #     deeper raises the simulated force, so the exact same control flow (descend
-#     until >= limit, retract, home, save) runs end-to-end with no hardware.
-#
-# The mode is auto-selected: if the Zaber isn't connected (STATE.axis is None) or
-# the FUTEK driver can't load (Mac, or FORCE_SIM=1), that source is simulated.
-# The run executes in a background thread; the UI polls `status()` for live
-# force/position and writes nothing itself. The real force/time stream is saved
-# to FUT/Run N.xlsx (same format the analysis reads).
+#     until >= limit, retract, home, save) runs end-to-end with no hardwar
 import math
 import os
 import threading
@@ -24,21 +15,78 @@ from hardware import STATE, _mm_unit
 
 # -- press parameters ---------------------------------------------------------
 HOME_MM = 17.0              # retracted / home position
-GAP_MM = 12.75 - 1.8        # initial travel toward the sensor before the press
-SAMPLE_DT = 0.010           # 100 Hz sampling — record force every 10 ms
-UPPER_LIMIT_N = 20.0        # stop the press once force reaches this
+GAP_MM = 10.95              # initial travel toward the sensor before the press
+SAMPLE_DT = 0.010           # 100 Hz sampling - record force every 10 ms
+UPPER_LIMIT_N = 32.0        # EM run press target - stop the press once force reaches this
+# travel safety: the Zaber stage's travel limits (mm). HOME_MM (17) is the
+# minimum / retracted end and the floor of travel; a press extrudes UPWARD from
+# there toward the 50.8 mm maximum. A press is stopped if the actuator reaches
+# either end, so it can never drive into its own mechanical hard stop. The
+# frontend uses the same range (ACTUATOR_MIN_MM / ACTUATOR_MAX_MM in shared.js).
+# Set these to match the actual stage if it differs.
+ZABER_TRAVEL_MIN_MM = 17.0
+ZABER_TRAVEL_MAX_MM = 50.8
+TRAVEL_MARGIN_MM = 0.5      # stop this far before the physical end stop
 LBF_TO_N = -4.44822         # FUTEK pounds -> newtons (and polarity flip)
 
-# real-hardware press speeds (slow, gentle) — used on Windows with the rig.
+# real-hardware press speeds (slow, gentle) - used on Windows with the rig.
 REAL_DESCEND_MM_S = 0.05
 REAL_ASCEND_MM_S = 1.0
-# simulated speeds — faster so a dev run on the Mac finishes in a few seconds.
+# simulated speeds - faster so a dev run on the Mac finishes in a few seconds.
 SIM_DESCEND_MM_S = 1.0
 SIM_ASCEND_MM_S = 2.5
 
 # simulated spring model: free travel before contact, then force rises with depth.
 SIM_FREE_GAP_MM = 2.0
 SIM_STIFFNESS_N_MM = 9.0
+
+# fatigue (cyclical) cycling speeds. Each cycle is force-feedback: press down to
+# the upper force bound, retract to the lower force bound, repeat N times. Real
+# uses a moderate speed; sim is faster so a handful of demo cycles finish quickly.
+REAL_CYC_DESCEND_MM_S = 1.0
+REAL_CYC_ASCEND_MM_S = 1.0
+SIM_CYC_DESCEND_MM_S = 4.0
+SIM_CYC_ASCEND_MM_S = 4.0
+# how many of the most recent 100 Hz samples the live waveform shows (~10 s).
+CYC_TRACE_WINDOW = 1000
+
+# force-spike protection. A sudden contact/jam jumps the force far more than a
+# smooth press. The legitimate jump between two force checks is about the contact
+# stiffness times how far the actuator moved between them (force = stiffness x
+# displacement), so for the continuous presses the cutoff SCALES WITH SPEED via
+# distance = speed x sample interval. The goal is to fire ONLY on a metal-stiffness
+# contact, not on pressing a sensor (even when contacting it at speed): a press
+# through a sensor is a few hundred N/mm at most (the soft sensor dominates the
+# series stiffness), while hitting the bare metal/load cell is ~8700 N/mm. So
+# SPIKE_STIFFNESS_N_PER_MM is set well above any sensor and well below metal, with
+# wide margin so a normal process is never interrupted. SPIKE_FLOOR_N is the
+# minimum, above the load cell's noise at very slow speeds. The manual jog is
+# stepped and the actuator stalls at its 25 N peak thrust, so its per-step jump is
+# bounded - it uses a flat MANUAL_SPIKE_N instead.
+SPIKE_FLOOR_N = 1.5
+SPIKE_STIFFNESS_N_PER_MM = 2000.0
+MANUAL_SPIKE_N = 8.0
+# absolute hard ceiling (N): force above this stops immediately, whatever caused
+# it. EM/fatigue runs intentionally target 32 N (above the 5 lb load cell's
+# 22.24 N rated output but within its 33.3 N safe overload), so the ceiling sits
+# just above 32 N and below 33.3 N to catch a true fault before the cell is
+# damaged. The actuator's ~25 N peak thrust is itself below the cell's safe
+# overload, so the actuator cannot physically drive the cell into overload - it
+# stalls (slip/stall detection) well before 33.3 N.
+FORCE_CEILING_N = 33.0
+# Fuji-film calibration press target.
+FUJI_TARGET_N = 20.0
+# manual jogs move in small increments so the load cell can be read between
+# steps and the motion halted the instant force crosses the ceiling.
+MANUAL_STEP_MM = 0.25
+
+
+class ForceSpikeStop(Exception):
+    """Raised inside a run loop when a force spike / over-force is detected."""
+
+
+class ZaberDisconnect(Exception):
+    """Raised inside a run loop when the live Zaber stops responding (comms lost)."""
 
 
 def _open_futek():
@@ -81,6 +129,7 @@ class RunEngine:
             return False, "A run is already in progress."
         STATE.stop_requested = False
         STATE.pause_requested = False
+        STATE.comms_lost = False
         self._thread = threading.Thread(
             target=self._run,
             args=(int(run_number), Path(test_folder), float(surface_area_mm2), redo_of, reason),
@@ -110,10 +159,84 @@ class RunEngine:
                 return 0.0
         # simulation: a gently stiffening contact spring (force rises a little
         # faster as the sensor compresses, like real foam/silicone), so the
-        # loading ramp is a smooth curve. No high-frequency ripple — the old
+        # loading ramp is a smooth curve. No high-frequency ripple - the old
         # sin(depth*60) term is what made the simulated curves look jagged.
         press = max(0.0, depth - SIM_FREE_GAP_MM)
         return SIM_STIFFNESS_N_MM * press * (1.0 + 0.06 * press)
+
+    def _spike_limit(self, distance_mm):
+        # speed-relative force-spike cutoff: scales with how far the actuator moves
+        # between force checks (distance = speed x sample interval for the presses),
+        # floored above the load cell's noise. A smooth press stays under it at any
+        # speed; a hard contact jumps past it.
+        return max(SPIKE_FLOOR_N, SPIKE_STIFFNESS_N_PER_MM * abs(distance_mm))
+
+    def _at_travel_limit(self):
+        # True when the actuator has reached (within a margin) either physical end
+        # of its travel. Checked in both directions so it is correct regardless of
+        # which way a press moves the stage.
+        pos = STATE.position_mm
+        return (pos <= ZABER_TRAVEL_MIN_MM + TRAVEL_MARGIN_MM or
+                pos >= ZABER_TRAVEL_MAX_MM - TRAVEL_MARGIN_MM)
+
+    def _approach_move(self, axis):
+        # single move toward the sensor, up to the gap-set start position. Contact
+        # and pressing happen afterward in the main loop, where the force-spike,
+        # ceiling, and travel checks run. Sets the position directly in simulation.
+        if axis is None:
+            STATE.position_mm = HOME_MM + GAP_MM
+            return
+        try:
+            axis.move_relative(GAP_MM, _mm_unit(), wait_until_idle=True)
+            STATE._read_position()
+        except Exception:
+            STATE.comms_lost = True
+            raise ZaberDisconnect()
+
+    def manual_move(self, distance):
+        # force-monitored manual jog: move in small steps and read the load cell
+        # between them so a manual press can't crush the sensor or fixture. Halts
+        # the instant force crosses the ceiling. Simulated stages (no real load
+        # cell) fall back to the plain move.
+        distance = float(distance)
+        axis = STATE.axis
+        if axis is None:
+            return STATE.move(STATE.comport, distance)
+        futek = _open_futek()
+        try:
+            steps = max(1, int(math.ceil(abs(distance) / MANUAL_STEP_MM)))
+            step = distance / steps
+            prev_force = None
+            force = 0.0
+            for _ in range(steps):
+                try:
+                    axis.move_relative(step, _mm_unit(), wait_until_idle=True)
+                except Exception as exc:
+                    STATE.comms_lost = True
+                    return {"ok": False, "position": STATE.position_mm,
+                            "message": f"Manual move failed: {exc}"}
+                STATE._read_position()
+                force = abs(self._read_force(futek, max(0.0, STATE.position_mm - HOME_MM)))
+                if force > FORCE_CEILING_N or (prev_force is not None and abs(force - prev_force) > MANUAL_SPIKE_N):
+                    try:
+                        axis.stop()
+                    except Exception:
+                        pass
+                    return {
+                        "ok": True, "position": STATE.position_mm, "force": force,
+                        "stopped_for_safety": True,
+                        "message": (f"Force limit reached ({force:.1f} N). Manual move stopped for "
+                                    f"safety at {STATE.position_mm:.2f} mm."),
+                    }
+                prev_force = force
+            return {"ok": True, "position": STATE.position_mm, "force": force,
+                    "message": f"Moved Zaber axis by {distance:g} mm. Current position: {STATE.position_mm:.2f} mm."}
+        finally:
+            if futek is not None:
+                try:
+                    futek.stop(); futek.exit()
+                except Exception:
+                    pass
 
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
@@ -123,33 +246,41 @@ class RunEngine:
         ascend = SIM_ASCEND_MM_S if simulated else REAL_ASCEND_MM_S
 
         self._set(status="running", run=run_number, simulated=simulated,
-                  force=0.0, samples=0, message="", position=HOME_MM)
+                  force=0.0, samples=0, message="", position=HOME_MM, disconnect=False, safety_stop=False)
 
         readings = []   # (index, force_N, time_s)
+        trace = []      # [time, force] for the dense (100 Hz) live force graph
         t0 = time.time()
         idx = 0
+        prev_force = None
 
-        def record(stage_force):
-            nonlocal idx
+        def record(stage_force, spike_limit):
+            nonlocal idx, prev_force
+            if STATE.comms_lost:
+                raise ZaberDisconnect()
+            # force-spike / over-force protection: a sudden jump (real contact/jam)
+            # or any reading past the hard ceiling stops the run for safety. The
+            # spike cutoff scales with the move speed; the smooth sim spring never
+            # trips this.
+            if (prev_force is not None and abs(stage_force - prev_force) > spike_limit) or stage_force > FORCE_CEILING_N:
+                raise ForceSpikeStop()
+            prev_force = stage_force
             # simulated runs use a deterministic 100 Hz clock so the time axis is
             # perfectly uniform (10 ms apart); real runs use the wall clock, which
             # follows the real FUTEK cadence.
             t = idx * SAMPLE_DT if simulated else (time.time() - t0)
             idx += 1
             readings.append((idx, stage_force, t))
-            self._set(force=stage_force, position=STATE.position_mm,
-                      elapsed=t, samples=idx)
+            trace.append([round(t, 4), round(stage_force, 4)])
+            fields = dict(force=stage_force, position=STATE.position_mm, elapsed=t, samples=idx)
+            # ship the dense waveform a few times per UI poll for a smooth 100 Hz graph.
+            if idx % 5 == 0:
+                fields["trace"] = list(trace)
+            self._set(**fields)
 
         try:
-            # --- gap-set move toward the sensor ---
-            if axis is not None:
-                try:
-                    axis.move_relative(-GAP_MM, _mm_unit())
-                    STATE._read_position()
-                except Exception:
-                    STATE.position_mm = HOME_MM - GAP_MM
-            else:
-                STATE.position_mm = HOME_MM - GAP_MM
+            # --- gap-set move toward the sensor (force-monitored) ---
+            self._approach_move(axis)
             start_pos = STATE.position_mm
             depth = 0.0
 
@@ -157,7 +288,7 @@ class RunEngine:
             if axis is not None:
                 from zaber_motion import Units
                 try:
-                    axis.move_velocity(-descend, Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                    axis.move_velocity(descend, Units.VELOCITY_MILLIMETRES_PER_SECOND)
                 except Exception:
                     pass
             init_force = None
@@ -170,31 +301,36 @@ class RunEngine:
                     self._stop_axis(axis); self._home(axis)
                     STATE.pause_requested = False
                     self._set(status="paused", position=HOME_MM,
-                              message=f"Run {run_number} paused — repeat this run.")
+                              message=f"Run {run_number} paused - repeat this run.")
                     return
 
                 if axis is None:
                     depth += descend * SAMPLE_DT
-                    STATE.position_mm = start_pos - depth
+                    STATE.position_mm = start_pos + depth
                 else:
                     STATE._read_position()
+                    depth = max(0.0, STATE.position_mm - start_pos)
                 force = self._read_force(futek, depth)
                 if init_force is None:
                     init_force = force
                 stage = force - init_force
-                record(stage)
+                record(stage, self._spike_limit(descend * SAMPLE_DT))
                 if stage >= UPPER_LIMIT_N:
                     self._stop_axis(axis)
                     break
-                if axis is None and depth > SIM_FREE_GAP_MM + (UPPER_LIMIT_N / SIM_STIFFNESS_N_MM) + 3:
-                    break  # sim safety net
+                # travel safety: never drive into the actuator's mechanical end stop.
+                if self._at_travel_limit():
+                    self._stop_axis(axis); self._home(axis)
+                    self._set(status="error", safety_stop=True, position=HOME_MM, trace=list(trace),
+                              message="Actuator reached its travel limit. Run stopped for safety.")
+                    return
                 time.sleep(SAMPLE_DT)
 
             # --- retract back to the start position ---
             if axis is not None:
                 from zaber_motion import Units
                 try:
-                    axis.move_velocity(ascend, Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                    axis.move_velocity(-ascend, Units.VELOCITY_MILLIMETRES_PER_SECOND)
                 except Exception:
                     pass
             while True:
@@ -204,23 +340,36 @@ class RunEngine:
                     return
                 if axis is None:
                     depth -= ascend * SAMPLE_DT
-                    STATE.position_mm = start_pos - depth
+                    STATE.position_mm = start_pos + depth
                 else:
                     STATE._read_position()
                 force = self._read_force(futek, max(0.0, depth))
-                record(force - (init_force or 0.0))
-                if STATE.position_mm >= start_pos:
+                record(force - (init_force or 0.0), self._spike_limit(ascend * SAMPLE_DT))
+                if STATE.position_mm <= start_pos:
                     self._stop_axis(axis)
                     break
                 time.sleep(SAMPLE_DT)
 
             self._home(axis)
             fut_path = self._write_fut(test_folder, run_number, readings)
+            # In simulation there's no capacitance logger, so synthesize a CAP file
+            # for this run. That lets the real EM analysis engine run on simulated
+            # data (full matplotlib figures + interactive plots) exactly like the
+            # rig. On real hardware the external logger writes CAP, so skip this.
+            if simulated:
+                self._write_cap(test_folder, run_number, readings, surface_area_mm2)
             # never overwrite: record this run (and the redo reason) in the log.
             import run_log
             run_log.record_run(test_folder, run_number, redo_of=redo_of, reason=reason)
-            self._set(status="completed", position=HOME_MM, redo_of=redo_of,
-                      message=f"Run {run_number} complete — {len(readings)} samples saved to {fut_path.name}.")
+            self._set(status="completed", position=HOME_MM, redo_of=redo_of, trace=list(trace),
+                      message=f"Run {run_number} complete - {len(readings)} samples saved to {fut_path.name}.")
+        except ForceSpikeStop:
+            self._stop_axis(axis)
+            self._home(axis)
+            self._set(status="error", safety_stop=True, position=HOME_MM,
+                      message="Force spike detected. Motion stopped for safety.")
+        except ZaberDisconnect:
+            self._zaber_disconnect_safe_state()
         except Exception as exc:
             self._set(status="error", message=f"Run failed: {exc}")
         finally:
@@ -230,12 +379,444 @@ class RunEngine:
                 except Exception:
                     pass
 
+    # -- the Fuji-film calibration press ------------------------------------
+
+    def start_fuji_film(self, surface_area_mm2=325.0):
+        if self.is_running():
+            return False, "A test is already in progress."
+        STATE.stop_requested = False
+        STATE.pause_requested = False
+        STATE.comms_lost = False
+        self._thread = threading.Thread(
+            target=self._run_fuji_film, args=(float(surface_area_mm2),), daemon=True)
+        self._thread.start()
+        return True, "Fuji Film Test started."
+
+    def _run_fuji_film(self, surface_area_mm2):
+        # press down until the load cell reaches the calibration target (20 N),
+        # streaming live force; spike/over-force and a max-travel timeout keep it
+        # safe. No data is saved - this is a calibration press.
+        axis = STATE.axis
+        futek = _open_futek()
+        simulated = (axis is None) or (futek is None)
+        descend = SIM_DESCEND_MM_S if simulated else REAL_DESCEND_MM_S
+        self._set(status="running", run=0, force=0.0, samples=0, message="",
+                  position=HOME_MM, simulated=simulated, trace=[], disconnect=False, safety_stop=False)
+        trace = []
+        t0 = time.time()
+        idx = 0
+        prev_force = None
+        try:
+            self._approach_move(axis)
+            start_pos = STATE.position_mm
+            depth = 0.0
+            if axis is not None:
+                from zaber_motion import Units
+                try:
+                    axis.move_velocity(descend, Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                except Exception:
+                    pass
+            init_force = None
+            while True:
+                if STATE.stop_requested:
+                    self._stop_axis(axis); self._home(axis)
+                    self._set(status="stopped", position=HOME_MM, message="Fuji Film Test stopped.")
+                    return
+                if axis is None:
+                    depth += descend * SAMPLE_DT
+                    STATE.position_mm = start_pos + depth
+                else:
+                    STATE._read_position()
+                    depth = max(0.0, STATE.position_mm - start_pos)
+                force = self._read_force(futek, depth)
+                if init_force is None:
+                    init_force = force
+                stage = force - init_force
+                if STATE.comms_lost:
+                    raise ZaberDisconnect()
+                if (prev_force is not None and abs(stage - prev_force) > self._spike_limit(descend * SAMPLE_DT)) or stage > FORCE_CEILING_N:
+                    raise ForceSpikeStop()
+                prev_force = stage
+                t = idx * SAMPLE_DT if simulated else (time.time() - t0)
+                idx += 1
+                trace.append([round(t, 4), round(stage, 4)])
+                fields = dict(force=stage, position=STATE.position_mm, elapsed=t, samples=idx)
+                if idx % 5 == 0:
+                    fields["trace"] = list(trace)
+                self._set(**fields)
+                if stage >= FUJI_TARGET_N:
+                    self._stop_axis(axis)
+                    break
+                if self._at_travel_limit():
+                    self._stop_axis(axis); self._home(axis)
+                    self._set(status="error", safety_stop=True, position=HOME_MM, trace=list(trace),
+                              message="Actuator reached its travel limit before the target force. Test stopped for safety.")
+                    return
+                time.sleep(SAMPLE_DT)
+            self._home(axis)
+            self._set(status="completed", position=HOME_MM, trace=list(trace),
+                      message=f"Fuji Film Test completed successfully - reached {FUJI_TARGET_N:.0f} N target.")
+        except ForceSpikeStop:
+            self._stop_axis(axis); self._home(axis)
+            self._set(status="error", safety_stop=True, position=HOME_MM,
+                      message="Force spike detected. Motion stopped for safety.")
+        except ZaberDisconnect:
+            self._zaber_disconnect_safe_state()
+        except Exception as exc:
+            self._set(status="error", message=f"Fuji Film Test failed: {exc}")
+        finally:
+            if futek is not None:
+                try:
+                    futek.stop(); futek.exit()
+                except Exception:
+                    pass
+
+    # -- the fatigue (cyclical) loop ----------------------------------------
+
+    def start_cyclical(self, params, test_folder, surface_area_mm2=325.0):
+        if self.is_running():
+            return False, "A test is already in progress."
+        STATE.stop_requested = False
+        STATE.pause_requested = False
+        STATE.comms_lost = False
+        self._thread = threading.Thread(
+            target=self._run_cyclical,
+            args=(dict(params), Path(test_folder), float(surface_area_mm2)),
+            daemon=True,
+        )
+        self._thread.start()
+        return True, "Fatigue test started."
+
+    @staticmethod
+    def _inverse_press(force):
+        # depth of compression (mm past the free gap) that the sim spring model
+        # needs to produce `force` N. Inverse of SIM_STIFFNESS*press*(1+0.06*press).
+        if force <= 0:
+            return 0.0
+        k = SIM_STIFFNESS_N_MM
+        a = 0.06 * k
+        return (-k + math.sqrt(k * k + 4.0 * a * force)) / (2.0 * a)
+
+    def _run_cyclical(self, params, test_folder, surface_area_mm2):
+        # Drives a true force WAVEFORM (sine or square) between the lower/upper
+        # bounds at the configured frequency, for N cycles. In simulation the
+        # recorded force IS the target waveform (a clean sine); on the real rig the
+        # actuator position is driven to track the waveform while the FUTEK is read.
+        axis = STATE.axis
+        futek = _open_futek() if axis is not None else None
+        from futek_cli import MockFUTEKDeviceCLI
+        real_run = (axis is not None) and (futek is not None) and not isinstance(futek, MockFUTEKDeviceCLI)
+        force_futek = futek if real_run else None
+        simulated = not real_run
+        lower = float(params.get("lower_force", 1.0))
+        upper = float(params.get("upper_force", 20.0))
+        total_cycles = max(1, int(params.get("cycle_count", 1)))
+        frequency = max(0.01, float(params.get("frequency", 1.0)))
+        waveform = str(params.get("waveform", "Sine")).lower()
+        mid = (lower + upper) / 2.0
+        amp = (upper - lower) / 2.0
+        period = 1.0 / frequency
+        total_time = total_cycles * period
+
+        def target_force(t):
+            # one full cycle per period: starts at the lower bound, peaks at upper.
+            if waveform.startswith("square"):
+                return upper if ((t * frequency) % 1.0) < 0.5 else lower
+            return mid - amp * math.cos(2.0 * math.pi * frequency * t)
+
+        self._set(status="running", run=0, cycle=0, total_cycles=total_cycles,
+                  simulated=simulated, force=0.0, samples=0, message="", position=HOME_MM,
+                  trace=[], disconnect=False, safety_stop=False)
+
+        readings = []   # (index, force_N, time_s, cycle)
+        trace = []      # recent [time, force] for the live waveform (dense, 100 Hz)
+        t0 = time.time()
+        idx = 0
+        prev_force = None
+        # spike threshold scales with the waveform's own max per-sample step so a
+        # fast sine never false-trips; a real spike is far larger than this.
+        spike_threshold = max(SPIKE_FLOOR_N, 5.0 * amp * 2.0 * math.pi * frequency * SAMPLE_DT)
+
+        def record(force_value, cycle):
+            nonlocal idx, prev_force
+            if STATE.comms_lost:
+                raise ZaberDisconnect()
+            if (prev_force is not None and abs(force_value - prev_force) > spike_threshold) or force_value > FORCE_CEILING_N:
+                raise ForceSpikeStop()
+            prev_force = force_value
+            t = idx * SAMPLE_DT if simulated else (time.time() - t0)
+            idx += 1
+            readings.append((idx, force_value, t, cycle))
+            trace.append([round(t, 4), round(force_value, 4)])
+            if len(trace) > CYC_TRACE_WINDOW:
+                del trace[0:len(trace) - CYC_TRACE_WINDOW]
+            fields = dict(force=force_value, position=STATE.position_mm, elapsed=t,
+                          samples=idx, cycle=cycle)
+            if idx % 5 == 0:
+                fields["trace"] = list(trace)
+            self._set(**fields)
+
+        Units = None
+        if axis is not None:
+            from zaber_motion import Units as _Units
+            Units = _Units
+
+        try:
+            # approach the sensor (same force-monitored gap move as the EM press).
+            self._approach_move(axis)
+            start_pos = STATE.position_mm
+
+            # depth range that maps to [lower, upper] force.
+            shallow_depth = SIM_FREE_GAP_MM + self._inverse_press(max(0.0, lower))
+            deep_depth = SIM_FREE_GAP_MM + self._inverse_press(max(0.0, upper))
+            cal_init = 0.0
+
+            if real_run:
+                # calibrate the real depth range: slow press to the upper force,
+                # capturing the depth at the lower and upper bounds.
+                try:
+                    axis.move_velocity(REAL_CYC_DESCEND_MM_S, Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                except Exception:
+                    pass
+                init_force = None
+                got_shallow = None
+                got_deep = None
+                cal_prev = None
+                while not STATE.stop_requested:
+                    # the calibration press drives into the sensor just like the
+                    # run itself, so it gets the same protection: abort on a comms
+                    # loss, a sudden force jump, or a reading past the hard ceiling.
+                    if STATE.comms_lost:
+                        raise ZaberDisconnect()
+                    STATE._read_position()
+                    d = max(0.0, STATE.position_mm - start_pos)
+                    f = self._read_force(force_futek, d)
+                    if init_force is None:
+                        init_force = f
+                    stage = f - init_force
+                    if (cal_prev is not None and abs(stage - cal_prev) > self._spike_limit(REAL_CYC_DESCEND_MM_S * SAMPLE_DT)) or stage > FORCE_CEILING_N:
+                        raise ForceSpikeStop()
+                    cal_prev = stage
+                    # travel safety: never drive into the actuator's mechanical end stop.
+                    if self._at_travel_limit():
+                        self._stop_axis(axis); self._home(axis)
+                        self._set(status="error", safety_stop=True, position=HOME_MM,
+                                  message="Actuator reached its travel limit. Fatigue test stopped for safety.")
+                        return
+                    if got_shallow is None and stage >= lower:
+                        got_shallow = d
+                    if stage >= upper:
+                        got_deep = d
+                        break
+                    time.sleep(SAMPLE_DT)
+                self._stop_axis(axis)
+                cal_init = init_force or 0.0
+                if got_deep is not None:
+                    deep_depth = got_deep
+                shallow_depth = got_shallow if got_shallow is not None else max(0.0, deep_depth - 1.0)
+
+            # generate the waveform for the full duration, sampled at 100 Hz and
+            # paced in real time so the live graph scrolls smoothly.
+            while not STATE.stop_requested:
+                t = idx * SAMPLE_DT
+                if t >= total_time:
+                    break
+                f_t = target_force(t)
+                cycle = min(total_cycles, int(t * frequency) + 1)
+                if simulated:
+                    # the recorded force IS the target -> an exact sine/square.
+                    STATE.position_mm = start_pos + (SIM_FREE_GAP_MM + self._inverse_press(max(0.0, f_t)))
+                    record(f_t, cycle)
+                else:
+                    # drive the actuator position to track the target waveform.
+                    span = (upper - lower) or 1.0
+                    frac = max(0.0, min(1.0, (f_t - lower) / span))
+                    target_depth = shallow_depth + frac * (deep_depth - shallow_depth)
+                    try:
+                        axis.move_absolute(start_pos + target_depth, _mm_unit(), wait_until_idle=False)
+                    except Exception:
+                        pass
+                    STATE._read_position()
+                    d = max(0.0, STATE.position_mm - start_pos)
+                    record(self._read_force(force_futek, d) - cal_init, cycle)
+                self._set(cycle=cycle)
+                time.sleep(SAMPLE_DT)
+
+            self._home(axis)
+            self._write_cyclical(test_folder, readings)
+            self._write_cyclical_graph(test_folder, readings)
+            done_cycles = readings[-1][3] if readings else 0
+            forces = [r[1] for r in readings]
+            self._write_cyclical_stats(test_folder, {
+                "Waveform": params.get("waveform", "Sine"),
+                "Frequency (Hz)": frequency,
+                "Lower Bound (N)": lower,
+                "Upper Bound (N)": upper,
+                "Target Cycles": total_cycles,
+                "Completed Cycles": done_cycles,
+                "Peak Force (N)": round(max(forces), 4) if forces else 0.0,
+                "Min Force (N)": round(min(forces), 4) if forces else 0.0,
+                "Mean Force (N)": round(sum(forces) / len(forces), 4) if forces else 0.0,
+                "Duration (s)": round(readings[-1][2], 3) if readings else 0.0,
+                "Samples": len(readings),
+            })
+            if STATE.stop_requested:
+                self._set(status="stopped", position=HOME_MM, trace=list(trace),
+                          message=f"Fatigue test stopped after {done_cycles} cycle(s).")
+            else:
+                self._set(status="completed", position=HOME_MM, trace=list(trace),
+                          message=f"Fatigue test complete - {total_cycles} cycle(s).")
+        except ForceSpikeStop:
+            self._stop_axis(axis)
+            self._home(axis)
+            self._write_cyclical_graph(test_folder, readings)
+            self._set(status="error", safety_stop=True, position=HOME_MM,
+                      message="Force spike detected. Fatigue test stopped for safety.")
+        except ZaberDisconnect:
+            self._zaber_disconnect_safe_state()
+        except Exception as exc:
+            self._set(status="error", message=f"Fatigue test failed: {exc}")
+        finally:
+            if futek is not None:
+                try:
+                    futek.stop(); futek.exit()
+                except Exception:
+                    pass
+
+    def _write_cyclical(self, test_folder, readings):
+        # save the full per-sample fatigue stream (Index, Load Cell, Time, Cycle).
+        test_dir = Path(test_folder)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        path = test_dir / "Fatigue_Data.xlsx"
+        try:
+            import xlsxwriter
+            workbook = xlsxwriter.Workbook(str(path))
+            worksheet = workbook.add_worksheet("Fatigue")
+            for col, head in enumerate(("Index", "Load Cell", "Time", "Cycle")):
+                worksheet.write(0, col, head)
+            for row, (index, force, t, cycle) in enumerate(readings, start=1):
+                worksheet.write(row, 0, index)
+                worksheet.write(row, 1, force)
+                worksheet.write(row, 2, t)
+                worksheet.write(row, 3, cycle)
+            workbook.close()
+            return path
+        except Exception:
+            import csv
+            path = test_dir / "Fatigue_Data.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["Index", "Load Cell", "Time", "Cycle"])
+                for index, force, t, cycle in readings:
+                    writer.writerow([index, round(force, 5), round(t, 5), cycle])
+            return path
+
+    def _write_cyclical_stats(self, test_folder, stats):
+        # save a small fatigue summary (not the full per-sample stream).
+        test_dir = Path(test_folder)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        path = test_dir / "Fatigue_Stats.xlsx"
+        try:
+            import xlsxwriter
+            workbook = xlsxwriter.Workbook(str(path))
+            worksheet = workbook.add_worksheet("Fatigue Stats")
+            worksheet.write(0, 0, "Metric")
+            worksheet.write(0, 1, "Value")
+            for row, (key, val) in enumerate(stats.items(), start=1):
+                worksheet.write(row, 0, key)
+                worksheet.write(row, 1, val)
+            workbook.close()
+            return path
+        except Exception:
+            import csv
+            path = test_dir / "Fatigue_Stats.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["Metric", "Value"])
+                for key, val in stats.items():
+                    writer.writerow([key, val])
+            return path
+
+    def _write_cyclical_graph(self, test_folder, readings):
+        # save the fatigue Force-vs-Time waveform as an image in the test folder.
+        if not readings:
+            return None
+        try:
+            import matplotlib
+            matplotlib.use("Agg")  # headless / thread-safe
+            import matplotlib.pyplot as plt
+        except Exception:
+            return None
+        # downsample so a long (multi-hour) run still plots quickly.
+        step = max(1, len(readings) // 6000)
+        times = [r[2] for r in readings[::step]]
+        forces = [r[1] for r in readings[::step]]
+        test_dir = Path(test_folder)
+        test_dir.mkdir(parents=True, exist_ok=True)
+        path = test_dir / "Fatigue_Force_vs_Time.png"
+        try:
+            fig, ax = plt.subplots(figsize=(11, 4.5))
+            ax.plot(times, forces, color="#3f73e6", linewidth=1.0)
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Force (N)")
+            ax.set_title("Fatigue - Force vs Time")
+            ax.grid(True, alpha=0.3)
+            fig.tight_layout()
+            fig.savefig(str(path), dpi=130)
+            plt.close(fig)
+            return path
+        except Exception:
+            return None
+
     def _stop_axis(self, axis):
         if axis is not None:
             try:
                 axis.stop()
             except Exception:
                 pass
+
+    def _zaber_disconnect_safe_state(self):
+        # Safe state after a Zaber comms loss: the actuator position is UNKNOWN, so
+        # do NOT command a blind home (it could drive into the fixture). Best-effort
+        # stop, mark the connection dead so the next run must re-initialize, report
+        # the error. The in-progress run is discarded (no data saved).
+        try:
+            if STATE.axis is not None:
+                STATE.axis.stop()
+        except Exception:
+            pass
+        STATE.cli = None
+        STATE.simulated = True
+        STATE.connection_lost = True
+        # disconnect=True lets the UI tell this apart from a force-spike stop: it
+        # hard-blocks Start and starts the live reconnect watcher.
+        self._set(status="error", disconnect=True,
+                  message="Actuator connection lost. Reconnect the Zaber to continue.")
+
+    def _write_cap(self, test_folder, run_number, readings, surface_area_mm2):
+        # synthetic capacitance for a simulated run: eight channels, each a sigmoid
+        # response vs pressure (force / area), so the real EM analysis engine has
+        # CAP+FUT for every run and produces its full figures/interactive plots.
+        import csv
+        cap_dir = Path(test_folder) / "CAP"
+        cap_dir.mkdir(parents=True, exist_ok=True)
+        path = cap_dir / f"Run {run_number}.csv"
+        area_m2 = max(1e-9, float(surface_area_mm2) * 1e-6)
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["Time", "Unused1", "Unused2", "Unused3", "Unused4",
+                             "CH1", "CH2", "CH3", "CH4", "CH5", "CH6", "CH7", "CH8"])
+            for index, force, t in readings:
+                pressure_kpa = max(0.0, force) / area_m2 / 1000.0
+                channels = []
+                for ch in range(8):
+                    baseline = 18.0 + ch * 0.4
+                    span = 2.6 + 0.18 * ch
+                    response = span / (1.0 + math.exp(-(pressure_kpa - 25.0) / 6.0))
+                    jitter = 0.012 * math.sin(t * 7.0 + ch)
+                    channels.append(round(baseline + response + jitter, 5))
+                writer.writerow([round(t, 5), "", "", "", "", *channels])
+        return path
 
     def _write_fut(self, test_folder, run_number, readings):
         fut_dir = Path(test_folder) / "FUT"

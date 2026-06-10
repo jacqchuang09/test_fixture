@@ -20,7 +20,7 @@ datas = [
     ("futek_cli.py", "."),
 ]
 
-# The FUTEK load cell uses .NET DLLs via pythonnet — Windows only.
+# The FUTEK load cell uses .NET DLLs via pythonnet - Windows only.
 # The DLLs live in libs/windows/ and are copied next to the exe (dest ".") so
 # pythonnet/.NET resolves them at runtime (see futek_cli._register_dll_dir).
 binaries = []
@@ -44,10 +44,10 @@ a = Analysis(
         "run_web_gui", "config", "hardware", "analysis", "server", "run_engine", "run_log", "futek_cli",
         "em_analysis", "shear_analysis", "manual_analysis", "plot_style",
         # matplotlib picks the SVG writer dynamically from savefig(format="svg"),
-        # so PyInstaller's static scan misses it — bundle the backend explicitly.
+        # so PyInstaller's static scan misses it - bundle the backend explicitly.
         "matplotlib.backends.backend_svg", "matplotlib.backends.backend_agg",
         # zaber + serial are imported lazily inside hardware.py / zaber_cli.py,
-        # so PyInstaller's static scan misses them — list them explicitly.
+        # so PyInstaller's static scan misses them - list them explicitly.
         "zaber_cli", "zaber_motion", "zaber_motion.ascii",
         "serial", "serial.tools", "serial.tools.list_ports",
         # em_analysis (Emilio's real EM pipeline) is imported lazily inside

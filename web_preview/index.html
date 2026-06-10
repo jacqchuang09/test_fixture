@@ -14,10 +14,10 @@
           <h1>Zaber Stage Testing</h1>
         </div>
         <div class="header-actions">
-          <button type="button" class="analyze-saved-btn" onclick="analyzeSavedDataFolder()" title="Analyze any folder that already contains FUT/CAP run files — EM, Shear, or Manual (no test run or hardware needed).">Analyze Saved Data</button>
+          <button type="button" class="analyze-saved-btn" onclick="analyzeSavedDataFolder()" title="Analyze any folder that already contains FUT/CAP run files - EM, Shear, or Manual (no test run or hardware needed).">Analyze Saved Data</button>
           <!-- TEMP: quick test of bundled real sample datasets -->
-          <button type="button" class="analyze-saved-btn" onclick="testSampleData('EM')" title="TEMP — run the bundled EM sample through the analysis pipeline.">Test EM Sample</button>
-          <button type="button" class="analyze-saved-btn" onclick="testSampleData('Shear')" title="TEMP — run the bundled Shear sample through the analysis pipeline.">Test Shear Sample</button>
+          <button type="button" class="analyze-saved-btn" onclick="testSampleData('EM')" title="TEMP - run the bundled EM sample through the analysis pipeline.">Test EM Sample</button>
+          <button type="button" class="analyze-saved-btn" onclick="testSampleData('Shear')" title="TEMP - run the bundled Shear sample through the analysis pipeline.">Test Shear Sample</button>
         </div>
       </header>
 
@@ -32,6 +32,23 @@
         </div>
         <div class="error-dialog-actions">
           <button class="primary" onclick="document.getElementById('errorDialog').close()">OK</button>
+        </div>
+      </dialog>
+
+      <!-- safety-stop acknowledgement: shown after a force spike, ceiling, or
+           travel-limit stop. The actuator has already stopped and returned home;
+           pressing Continue restarts whatever was running. -->
+      <dialog id="safetyStopDialog" class="error-dialog">
+        <div class="error-dialog-head">
+          <span class="error-dialog-icon">!</span>
+          <h2 id="safetyStopTitle">Test stopped for safety</h2>
+        </div>
+        <div class="error-dialog-body">
+          <p id="safetyStopMessage" class="error-dialog-message"></p>
+          <p class="error-dialog-message" style="color:#697790;font-size:13px;">The actuator has stopped and returned to its home position. Press Continue to move back to home and restart.</p>
+        </div>
+        <div class="error-dialog-actions">
+          <button class="primary" id="safetyStopContinueButton" onclick="runSafetyStopContinue()">Continue</button>
         </div>
       </dialog>
 
@@ -164,6 +181,9 @@
             </div>
           </section>
 
+          <!-- test-configuration messages appear here, right above the box -->
+          <div id="configMessage" class="main-message"></div>
+
           <!-- this section opens after verify is clicked -->
           <section id="testConfig" class="hidden">
             <h2>Test Configuration</h2>
@@ -189,7 +209,7 @@
                   <span class="sensor-help" tabindex="0" data-tooltip="Surface Area of the Ecoflex block used to calculate pressure from force measurements.">i</span>
                 </span>
                 <span class="suffix-field">
-                  <input id="surfaceArea" type="number" min="0" step="0.01" value="325" />
+                  <input id="surfaceArea" type="number" min="0.01" step="0.01" value="325" />
                   <span class="suffix">mm²</span>
                 </span>
               </label>
@@ -197,9 +217,9 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Number of Runs</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="Total number of EM runs to complete. Disabled when redoing a specific existing run.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Total number of EM runs to complete (1 to 10; typically 3). Disabled when redoing a specific existing run.">i</span>
                 </span>
-                <input id="runs" type="number" min="1" value="3" />
+                <input id="runs" type="number" min="1" max="10" step="1" value="3" />
               </label>
 
               <label>
@@ -215,9 +235,11 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Run to Redo</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="Specific positive run number to repeat. This unlocks automatically when you choose Redo a Specific Run from an existing test folder.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Pick which run to redo. Only active runs are listed - a run that was already superseded by a redo can't be redone again. Unlocks when you choose Redo a Specific Run from an existing test folder.">i</span>
                 </span>
-                <input id="runToRedo" type="number" min="1" step="1" disabled />
+                <select id="runToRedo" disabled>
+                  <option value="">Select run…</option>
+                </select>
               </label>
             </div>
 
@@ -235,7 +257,7 @@
     <dialog id="emTestModal" class="wide-dialog em-dialog">
       <div class="modal-head">
         <h2>EM Testing Window</h2>
-        <button id="emTestCloseButton" class="close" onclick="emTestModal.close()">x</button>
+        <button id="emTestCloseButton" class="close" onclick="stopReconnectWatch(); emTestModal.close()">x</button>
       </div>
       <div class="modal-body">
         <div class="mini-panel em-panel">
@@ -321,7 +343,7 @@
                   <span id="manualPrimaryControlLabel" class="label-text">Increment Distance (mm)</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.">i</span>
                 </span>
-                <input id="manualIncrementDistance" type="number" min="0.1" max="15" step="0.1" value="0.1" />
+                <input id="manualIncrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
                 <input id="manualTargetForce" class="hidden" type="number" min="0" max="32" step="0.1" value="1.5" />
               </label>
               <label id="manualSpeedField">
@@ -329,7 +351,7 @@
                   <span class="label-text">Actuator Speed (mm/s)</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Assumed actuator travel speed used to estimate elapsed time on the manual preview graphs. Default is 2.0 mm/s.">i</span>
                 </span>
-                <input id="manualActuatorSpeed" type="number" min="0.01" max="25" step="0.1" value="2.0" />
+                <input id="manualActuatorSpeed" type="number" min="0.01" max="2" step="0.001" value="1.0" />
               </label>
             </div>
 
@@ -346,7 +368,7 @@
                     <span class="label-text">Drag Position Control (mm)</span>
                     <span class="sensor-help" tabindex="0" data-tooltip="Drag to choose a target position from 17 mm baseline to 50.8 mm max (full actuator travel). The actuator only moves after Confirm Drag Move is pressed.">i</span>
                   </span>
-                  <input id="manualDragPosition" type="range" min="17" max="50.8" step="0.1" value="17" oninput="stageManualDragMove()" />
+                  <input id="manualDragPosition" type="range" min="17" max="50.8" step="0.01" value="17" oninput="stageManualDragMove()" />
                   <div id="manualDragReadout" class="manual-drag-readout">selected position: 17.0 mm. travel from baseline: 0.0 mm.</div>
                 </label>
                 <button id="manualConfirmDragButton" class="manual-confirm-button" onclick="confirmManualDragMove()" disabled>Confirm Drag Move</button>
@@ -439,11 +461,28 @@
       </div>
     </dialog>
 
+    <dialog id="fatigueAnalysisModal" class="wide-dialog analysis-dialog">
+      <div class="modal-head">
+        <h2>Fatigue Analysis Plots</h2>
+        <button class="close" onclick="closeAnalysisToMain('fatigue')">x</button>
+      </div>
+      <div class="modal-body">
+        <div class="tabs" id="fatigueAnalysisTabs">
+          <button class="tab-button active" onclick="showAnalysisTab('fatigue', 'summary')">Summary</button>
+          <button class="tab-button" onclick="showAnalysisTab('fatigue', 'interactive')">Interactive</button>
+        </div>
+        <div class="analysis-page">
+          <div id="fatigue-summary" class="tab-panel active"></div>
+          <div id="fatigue-interactive" class="tab-panel"></div>
+        </div>
+      </div>
+    </dialog>
+
     <!-- cyclical test window -->
     <dialog id="cyclicalTestModal" class="wide-dialog em-dialog">
       <div class="modal-head">
         <h2>Fatigue Testing Window</h2>
-        <button id="cyclicalTestCloseButton" class="close" onclick="cyclicalTestModal.close()">x</button>
+        <button id="cyclicalTestCloseButton" class="close" onclick="stopReconnectWatch(); cyclicalTestModal.close()">x</button>
       </div>
       <div class="modal-body graph-shell">
         <div class="cyclical-state-row">
@@ -468,7 +507,7 @@
                   <span class="label-text">Lower Force Bound (N)</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Lowest force target in each fatigue cycle. Example: cycle between 1 N and 20 N.">i</span>
                 </span>
-                <input id="cyclicalLowerForce" type="number" min="-20" max="32" step="0.1" value="1" />
+                <input id="cyclicalLowerForce" type="number" min="0" max="32" step="0.1" value="1" />
               </label>
 
               <label>
@@ -484,7 +523,7 @@
                   <span class="label-text">Frequency (Hz)</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Number of fatigue cycles per second.">i</span>
                 </span>
-                <input id="waveformFrequency" type="number" min="0.01" step="0.01" value="1" />
+                <input id="waveformFrequency" type="number" min="0.01" max="5" step="0.01" value="1" />
               </label>
 
               <label>
@@ -619,7 +658,7 @@
     <dialog id="calibrationModal">
       <div class="modal-head">
         <h2>Calibration Window</h2>
-        <button id="calibrationCloseButton" class="close" onclick="calibrationModal.close()">x</button>
+        <button id="calibrationCloseButton" class="close" onclick="stopReconnectWatch(); calibrationModal.close()">x</button>
       </div>
       <div class="modal-body">
         <div class="alert">Error Check Active: Movement will stop if significant force increase is detected</div>
@@ -632,7 +671,7 @@
           <h3>Manual Increment Control</h3>
           <label>
             <span class="label-text">Increment Distance (mm)</span>
-            <input id="incrementDistance" type="number" min="0.1" max="15" step="0.1" value="0.1" />
+            <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
           </label>
           <div class="calibration-actions" style="margin-top: 14px;">
             <button onclick="calibrationMove('up')">↑ Move Up</button>

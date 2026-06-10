@@ -1,5 +1,5 @@
 /*
- * shear.js — Shear test window.
+ * shear.js - Shear test window.
  *
  * Owns the shear test modal and the shear analysis modal. Runs the live
  * shear-force capture and flags channels that cross the delta/short threshold.
@@ -374,7 +374,7 @@
             .filter((d) => d.delta_over_count > 0)
             .map((d) => ({ channel: d.channel, delta: d.max_delta }));
           document.getElementById("shear-plot").innerHTML = `
-            <div class="em-analysis-png-wrap">${emPngImg(analysis.shear_images.raw_fig, "Raw shearing figure — CAP and force")}</div>
+            <div class="em-analysis-png-wrap">${emPngImg(analysis.shear_images.raw_fig, "Raw shearing figure - CAP and force")}</div>
           `;
           document.getElementById("shear-detection").innerHTML = shearDetectionTable(negativeByChannel, deltaEventsByChannel);
           renderShearReportPanel(shortedChannels, testResult);

@@ -1,5 +1,5 @@
 /*
- * fatigue.js — Fatigue (cyclical) test window.
+ * fatigue.js - Fatigue (cyclical) test window.
  *
  * Owns the cyclical fatigue modal: builds the target force waveform from the
  * user's bounds/frequency/cycle count, previews it, runs the cycle loop, and
@@ -18,16 +18,16 @@
 
 
       function clampCyclicalLowerForce(value) {
-        return Math.min(32, Math.max(-20, Number(value || 0)));
+        return Math.min(32, Math.max(0, Number(value || 0)));
       }
 
       function cyclicalBounds() {
-        const lowerInput = document.getElementById("cyclicalLowerForce");
-        const upperInput = document.getElementById("cyclicalUpperForce");
-        const lowerForce = clampCyclicalLowerForce(lowerInput.value);
-        const upperForce = clampForce(upperInput.value);
-        lowerInput.value = lowerForce;
-        upperInput.value = upperForce;
+        // read + clamp for computing the preview only - do NOT write the values
+        // back into the inputs here, or the live preview (which fires on every
+        // keystroke) would erase a decimal point as you type it. The fields are
+        // normalized on change/blur instead (normalizeNumberField in main.js).
+        const lowerForce = clampCyclicalLowerForce(document.getElementById("cyclicalLowerForce").value);
+        const upperForce = clampForce(document.getElementById("cyclicalUpperForce").value);
         return { lowerForce, upperForce, isValid: upperForce > lowerForce };
       }
 
@@ -108,49 +108,87 @@
         updateCyclicalEstimate();
       }
 
-      function startCyclicalTest() {
+      async function startCyclicalTest() {
         if (cyclicalTimer || cyclicalReturnHomeTimer) return;
         const { isValid } = cyclicalBounds();
         if (!isValid) {
           setStatePill("cyclicalState", "ERROR", "upper force bound must be higher than lower force bound.");
           return;
         }
+        // Fatigue drives the real actuator - require a live Zaber on a real rig
+        // (stays soft in simulation so dev/demo runs still work).
+        if (!(await zaberStartGateOk())) return;
         cyclicalData = [];
         cyclicalStartedAt = performance.now();
         setCyclicalControlsLocked(true);
         document.getElementById("cyclicalPauseButton").disabled = false;
         setStatePill("cyclicalState", "RUNNING", "actuator cycling force bounds to simulate sensor lifespan.");
-        cyclicalTimer = setInterval(recordCyclicalPoint, 100);
-      }
-
-      function recordCyclicalPoint() {
-        const cfg = config();
-        const elapsedSeconds = (performance.now() - cyclicalStartedAt) / 1000;
-        const { lowerForce, upperForce, isValid } = cyclicalBounds();
-        if (!isValid) {
-          pauseCyclicalTest("ERROR: upper force bound must be higher than lower force bound.");
-          return;
-        }
-        const frequency = Math.max(0.01, cfg.waveform_frequency);
-        const force = cyclicalForceValue(cfg.waveform_type, elapsedSeconds, lowerForce, upperForce, frequency);
-        cyclicalData.push({ time: elapsedSeconds, force });
-        drawCyclicalPreview();
-        if (elapsedSeconds >= cyclicalEstimatedSeconds()) {
-          pauseCyclicalTest("COMPLETED: cyclical fatigue test completed.");
-        }
-      }
-
-      function pauseCyclicalTest(message = "STOPPED: cyclical fatigue test stopped.") {
-        clearInterval(cyclicalTimer);
-        cyclicalTimer = null;
-        setCyclicalControlsLocked(true);
-        const [state, ...body] = message.split(":");
-        setStatePill("cyclicalState", "RETURNING_HOME", "actuator stopping and returning to home position. controls locked.");
-        cyclicalReturnHomeTimer = setTimeout(() => {
-          cyclicalReturnHomeTimer = null;
+        const result = await callApi("/api/start-cyclical", config());
+        if (!result || !result.ok) {
           setCyclicalControlsLocked(false);
           document.getElementById("cyclicalStartButton").disabled = false;
           document.getElementById("cyclicalPauseButton").disabled = true;
-          setStatePill("cyclicalState", state, body.join(":").trim());
-        }, 5000);
+          setStatePill("cyclicalState", "ERROR", (result && result.message) || "could not start fatigue test.");
+          return;
+        }
+        cyclicalTimer = setInterval(pollCyclicalStatus, 100);
+      }
+
+      // poll the backend fatigue run for live force/cycle and react to completion.
+      async function pollCyclicalStatus() {
+        const status = await callApi("/api/run-status");
+        if (!status || !status.ok) return;
+        const force = Number(status.force || 0);
+        const cycle = Number(status.cycle || 0);
+        const totalCycles = Number(status.total_cycles || 0);
+        // rebuild the live waveform from the backend's dense 100 Hz window so the
+        // trace is smooth (not one aliased point per poll). Times are normalized
+        // so the window starts at 0 and scrolls as the run progresses.
+        if (Array.isArray(status.trace) && status.trace.length) {
+          const t0 = status.trace[0][0];
+          cyclicalData = status.trace.map((point) => ({ time: point[0] - t0, force: point[1] }));
+          drawCyclicalPreview();
+        }
+        if (status.status === "running") {
+          setStatePill("cyclicalState", "RUNNING", `cycle ${cycle}${totalCycles ? ` / ${totalCycles}` : ""} - force ${force.toFixed(2)} N.`);
+        }
+        if (status.status === "completed" || status.status === "stopped" || status.status === "error") {
+          clearInterval(cyclicalTimer);
+          cyclicalTimer = null;
+          finishCyclicalRun(status);
+        }
+      }
+
+      function finishCyclicalRun(status) {
+        setCyclicalControlsLocked(false);
+        document.getElementById("cyclicalPauseButton").disabled = true;
+        if (status.disconnect) {
+          // hard-block Start until the actuator is reconnected; watch for it live.
+          document.getElementById("cyclicalStartButton").disabled = true;
+          setStatePill("cyclicalState", "DISCONNECTED", status.message || "Actuator connection lost. Reconnect the Zaber to continue.");
+          startReconnectWatch(() => {
+            document.getElementById("cyclicalStartButton").disabled = false;
+            setStatePill("cyclicalState", "RECONNECTED", "Zaber reconnected and re-homed. You can continue.");
+          });
+          return;
+        }
+        if (status.safety_stop) {
+          // safety trip (force spike / ceiling / travel limit): the engine already
+          // stopped and homed. Dialog, then restart the fatigue test on Continue.
+          document.getElementById("cyclicalStartButton").disabled = false;
+          setStatePill("cyclicalState", "STOPPED", status.message || "Fatigue test stopped for safety.");
+          showSafetyStopDialog(status.message, () => startCyclicalTest());
+          return;
+        }
+        document.getElementById("cyclicalStartButton").disabled = false;
+        const stateTag = { completed: "COMPLETED", stopped: "STOPPED", error: "ERROR" }[status.status] || "READY";
+        setStatePill("cyclicalState", stateTag, status.message || "fatigue test finished.");
+      }
+
+      async function pauseCyclicalTest() {
+        // stop the real run; the backend halts the actuator, homes it, saves the
+        // data, and reports 'stopped' on the next poll (which finishes the UI).
+        document.getElementById("cyclicalPauseButton").disabled = true;
+        setStatePill("cyclicalState", "RETURNING_HOME", "stopping… actuator returning to home position. controls locked.");
+        await callApi("/api/stop", {});
       }

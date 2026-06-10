@@ -1,15 +1,13 @@
-# Shear analysis — matplotlib figure + shorted-channel detection.
+# Shear analysis - matplotlib figure + shorted-channel detection.
 #
-# Adapted from emilio's ShearAnalysis (zaber-python shear_analysis.py) to the web
-# app's saved-file layout:
 #   - CAP csv:  time in column 0, CH1..CH8 in columns 5..12 (v = 5).
 #   - FUT file: load cell (N) in column 1, time (s) in column 2 (csv or xlsx).
 #
 # Outputs written into the test folder:
-#   - "Raw Fig_ Shearing.png"  : 9 stacked subplots — each channel's raw CAP (blue,
+#   - "Raw Fig_ Shearing.png"  : 9 stacked subplots - each channel's raw CAP (blue,
 #                                left axis) + ΔCAP (orange, right axis), and the
 #                                load-cell force (green) along the bottom.
-#   - "SHEAR_RESULT.xlsx"       : negative-CAP and ΔCAP>10 pF sheets + metadata.
+#   - "SHEAR_RESULT.xlsx"      : negative-CAP and ΔCAP>10 pF sheets + metadata.
 #
 # Shorted-channel rule (same as the reference): a channel is flagged if it shows
 # negative capacitance or a ΔCAP greater than 10 pF.
