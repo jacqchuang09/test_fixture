@@ -331,6 +331,21 @@
         await callApi("/api/pause");
       }
 
+      // Closing the EM test window: blocked while a run is physically in progress,
+      // and otherwise it tells the backend to stop/reset so the engine is never left
+      // thinking a test is still running (which would block the next test).
+      async function closeEmTestWindow() {
+        if (emRunTimer || emReturnHomeTimer) {
+          showErrorDialog(
+            "A run is in progress. Pause the run before closing the test window.",
+            "Test in progress");
+          return;
+        }
+        stopReconnectWatch();
+        await callApi("/api/stop", {});
+        emTestModal.close();
+      }
+
       async function performEmAnalysis() {
         appendEmStatus("starting em analysis...");
         document.getElementById("emAnalysisButton").disabled = true;

@@ -19,6 +19,7 @@ if str(WEB_PREVIEW) not in sys.path:
 import webview
 
 import run_web_gui
+from run_engine import ENGINE
 
 
 def main():
@@ -31,6 +32,24 @@ def main():
 
     # let the backend's folder button use the native pywebview dialog.
     run_web_gui.set_desktop_window(window)
+
+    def _on_closing():
+        # Do not let the operator close the whole app while a test run is
+        # physically in progress - that would abandon the actuator mid-motion.
+        # Returning False cancels the close; a paused/idle test closes normally.
+        if ENGINE.is_running():
+            try:
+                window.evaluate_js(
+                    "window.showErrorDialog && showErrorDialog("
+                    "'A test is running. Pause or stop it before closing the app.',"
+                    "'Test in progress')"
+                )
+            except Exception:
+                pass
+            return False
+        return True
+
+    window.events.closing += _on_closing
 
     try:
         webview.start()

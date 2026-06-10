@@ -967,7 +967,10 @@
         event.preventDefault();
       });
       emTestModal.addEventListener("cancel", (event) => {
-        if (emReturnHomeTimer || emRunTimer) event.preventDefault();
+        // route ESC through the guarded close so a paused test can't be closed raw
+        // (which would orphan the backend run and block the next test).
+        event.preventDefault();
+        closeEmTestWindow();
       });
       calibrationModal.addEventListener("cancel", (event) => {
         if (fujiTimer) event.preventDefault();
