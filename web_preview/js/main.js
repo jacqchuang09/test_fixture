@@ -97,9 +97,9 @@
       }
 
       function cleanedBaseSaveFolder(pathValue) {
-        const rawPath = String(pathValue || "").trim().replace(/\/+$/, "");
+        const rawPath = String(pathValue || "").trim().replace(/[/\\]+$/, "");
         if (!rawPath) return rawPath;
-        const parts = rawPath.split("/").filter((part, index) => index === 0 || part !== "");
+        const parts = rawPath.split(/[/\\]/).filter((part, index) => index === 0 || part !== "");
         const testFolderIndex = parts.findIndex((part) => /^\d{2} \d{2} \d{2}_.+_(EM|EB|Shear|Manual|Fatigue)(?:_\d+)?$/i.test(part));
         if (testFolderIndex > 0) {
           return parts.slice(0, Math.max(1, testFolderIndex - 1)).join("/") || "/";
@@ -293,11 +293,15 @@
         //   {MM DD YY}_{SurfaceArea}mm2_{TestType}   (TestType = EM | Shear |
         //   Manual | Fatigue, optional _1/_2/... version suffix).
         // Validate up front so a wrong pick shows a pop-up immediately - no loading.
-        const folderName = (folder.split("/").filter(Boolean).pop() || "");
-        if (!/^\d{2} \d{2} \d{2}_[\d.]+mm2_(EM|Shear|Manual|Fatigue)(?:_\d+)?$/i.test(folderName)) {
+        // split on BOTH separators - the Windows folder picker returns backslash
+        // paths (C:\Users\...\03 09 26_325mm2_EM), Mac returns forward slashes.
+        const folderName = (folder.split(/[/\\]/).filter(Boolean).pop() || "");
+        // accept any surface-area string (EM uses "325mm2", Shear/Manual may use a
+        // bare value like "50.27") - match the same pattern cleanedBaseSaveFolder uses.
+        if (!/^\d{2} \d{2} \d{2}_.+_(EM|EB|Shear|Manual|Fatigue)(?:_\d+)?$/i.test(folderName)) {
           showErrorDialog(
             `"${escapeHtml(folderName)}" isn't a valid analysis folder.\n\n` +
-            `<strong>Expected:</strong>   MM DD YY_&lt;area&gt;mm2_&lt;TestType&gt;\n` +
+            `<strong>Expected:</strong>   MM DD YY_&lt;area&gt;_&lt;TestType&gt;\n` +
             `<strong>Example:</strong>    03 09 26_325mm2_EM\n\n` +
             `TestType must be EM, Shear, Manual, or Fatigue.`,
             "Cannot analyze this folder",
@@ -320,7 +324,7 @@
 
       // infer the test type from a saved test-folder name (…_EM / _Shear / _Manual / _Fatigue).
       function detectTestTypeFromFolder(folder) {
-        const name = (folder.split("/").filter(Boolean).pop() || "");
+        const name = (folder.split(/[/\\]/).filter(Boolean).pop() || "");
         const match = name.match(/_(EM|EB|Shear|Manual|Fatigue)(?:_\d+)?$/i);
         if (!match) return "EM";
         const key = match[1].toLowerCase();
@@ -331,7 +335,7 @@
       }
 
       function surfaceAreaFromFolder(folder) {
-        const name = (folder.split("/").filter(Boolean).pop() || "");
+        const name = (folder.split(/[/\\]/).filter(Boolean).pop() || "");
         const match = name.match(/_([\d.]+)mm2/i);
         return match ? `${match[1]}mm2` : null;
       }
