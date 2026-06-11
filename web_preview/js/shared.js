@@ -67,6 +67,9 @@
       let emRunTimer = null;
       let emReturnHomeTimer = null;
       let emRunStartedAt = null;
+      // when the just-finished run is a redo, holds its NEW run number so the
+      // completion can tell the operator exactly what to name the CAP file.
+      let emRedoNewRun = null;
       let emReadings = [];
       let emAnalysisReadings = [];
       // real computed curve data from the python EM engine (em_analysis.plot_payload).

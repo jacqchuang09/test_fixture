@@ -198,6 +198,9 @@
         if (Number.isFinite(Number(result.run_number))) {
           emCurrentRun = Number(result.run_number);
         }
+        // remember the NEW run number for a redo so completion can tell the operator
+        // exactly what to name the capacitance file (a redo of run 2 saves as run 4).
+        emRedoNewRun = redoOf ? emCurrentRun : null;
         // clear any prior readings for THIS run number (e.g. a repeat after a pause).
         emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
         emRunTimer = setInterval(pollRunStatus, 100);
@@ -309,6 +312,16 @@
           document.getElementById("emAnalysisButton").disabled = false;
           setEmState("COMPLETED", `all ${emTotalRuns} run(s) completed and saved. perform analysis is now available.`, "kept");
           resetRedoWorkflowAfterRun();
+          // a redo saves under a NEW run number; tell the operator the exact CAP
+          // filename to add (named for the new run, not the one they redid).
+          if (emRedoNewRun) {
+            const n = emRedoNewRun;
+            emRedoNewRun = null;
+            showErrorDialog(
+              `This redo was saved as run ${n} (not the run you redid). Before running analysis, ` +
+              `rename its capacitance file to exactly "Run ${n}.csv" and add it to the test folder's CAP folder.`,
+              `Add the capacitance file for run ${n}`);
+          }
           return;
         }
 
