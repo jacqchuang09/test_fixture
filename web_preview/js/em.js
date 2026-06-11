@@ -1065,36 +1065,60 @@
         const runs = [...new Set(readings.map((point) => point.run))].sort((a, b) => a - b);
         const channels = Array.from({ length: 8 }, (_, index) => index + 1);
         const surfaceArea = Math.max(1, Number.parseFloat(document.getElementById("surfaceArea").value || "325"));
-        const channelStats = channels.map((channel) => {
-          const psAtInflection = [];
-          const maxKpa = [];
-          const maxCap = [];
-
-          runs.forEach((run) => {
-            const runReadings = readings.filter((point) => point.run === run);
-            const forceValues = runReadings.map((point) => point.force);
-            const kPaValues = forceValues.map((force) => (force / surfaceArea) * 1000);
-            const capValues = runReadings.map((point) => emChannelValue(point, channel));
-            const psValues = capValues.map((cap, index) => cap / Math.max(0.1, kPaValues[index] + 1));
-            const derivativeValues = psValues.slice(1).map((value, index) => Math.abs(value - psValues[index]));
-            const peakDerivativeIndex = Math.max(0, derivativeValues.indexOf(Math.max(...derivativeValues)));
-            const maxCapValue = Math.max(...capValues, 0);
-            const maxCapIndex = Math.max(0, capValues.indexOf(maxCapValue));
-
-            psAtInflection.push(psValues[peakDerivativeIndex] || 0);
-            maxKpa.push(kPaValues[maxCapIndex] || Math.max(...kPaValues, 0));
-            maxCap.push(maxCapValue);
+        // Prefer the REAL per-channel stats from the Python pipeline (computed from
+        // the actual CAP files). Each backend block has mean/std/cov/min/max and cov
+        // is already a percentage; map it to this table's {average, standardDeviation,
+        // min, max} shape. Only synthesize when there is no real analysis.
+        let channelStats;
+        if (emBackendChannelStats) {
+          const byCh = {};
+          emBackendChannelStats.forEach((c) => { byCh[Number(c.channel)] = c; });
+          const block = (b) => ({
+            average: Number((b && b.mean) || 0),
+            standardDeviation: Number((b && b.std) || 0),
+            min: Number((b && b.min) || 0),
+            max: Number((b && b.max) || 0),
           });
+          channelStats = channels.map((channel) => {
+            const c = byCh[channel] || {};
+            return {
+              psAtInflection: block(c.ps), covPsAtInflection: Number((c.ps && c.ps.cov) || 0),
+              maxKpa: block(c.kpa), covMaxKpa: Number((c.kpa && c.kpa.cov) || 0),
+              maxCap: block(c.cap), covMaxCap: Number((c.cap && c.cap.cov) || 0),
+            };
+          });
+        } else {
+          channelStats = channels.map((channel) => {
+            const psAtInflection = [];
+            const maxKpa = [];
+            const maxCap = [];
 
-          return {
-            psAtInflection: summaryStats(psAtInflection),
-            covPsAtInflection: coefficientOfVariation(psAtInflection),
-            maxKpa: summaryStats(maxKpa),
-            covMaxKpa: coefficientOfVariation(maxKpa),
-            maxCap: summaryStats(maxCap),
-            covMaxCap: coefficientOfVariation(maxCap),
-          };
-        });
+            runs.forEach((run) => {
+              const runReadings = readings.filter((point) => point.run === run);
+              const forceValues = runReadings.map((point) => point.force);
+              const kPaValues = forceValues.map((force) => (force / surfaceArea) * 1000);
+              const capValues = runReadings.map((point) => emChannelValue(point, channel));
+              const psValues = capValues.map((cap, index) => cap / Math.max(0.1, kPaValues[index] + 1));
+              const derivativeValues = psValues.slice(1).map((value, index) => Math.abs(value - psValues[index]));
+              const peakDerivativeIndex = Math.max(0, derivativeValues.indexOf(Math.max(...derivativeValues)));
+              const maxCapValue = Math.max(...capValues, 0);
+              const maxCapIndex = Math.max(0, capValues.indexOf(maxCapValue));
+
+              psAtInflection.push(psValues[peakDerivativeIndex] || 0);
+              maxKpa.push(kPaValues[maxCapIndex] || Math.max(...kPaValues, 0));
+              maxCap.push(maxCapValue);
+            });
+
+            return {
+              psAtInflection: summaryStats(psAtInflection),
+              covPsAtInflection: coefficientOfVariation(psAtInflection),
+              maxKpa: summaryStats(maxKpa),
+              covMaxKpa: coefficientOfVariation(maxKpa),
+              maxCap: summaryStats(maxCap),
+              covMaxCap: coefficientOfVariation(maxCap),
+            };
+          });
+        }
         const rows = [
           ["Mean PS at Inflection", (stats) => stats.psAtInflection.average.toFixed(3)],
           ["Std PS at Inflection", (stats) => stats.psAtInflection.standardDeviation.toFixed(3)],
@@ -1332,6 +1356,10 @@
           ? analysis.em_plots : null;
         // adopt the real matplotlib PNG figures when present (preferred display).
         emImages = (analysis && analysis.em_images) ? analysis.em_images : null;
+        // adopt the real per-channel stats (from the CAP files) for the Summary
+        // Statistics table; null falls the table back to the synthesized preview.
+        emBackendChannelStats = (analysis && Array.isArray(analysis.channel_stats) && analysis.channel_stats.length)
+          ? analysis.channel_stats : null;
         // embed the interactive (zoom + click-to-comment) plots in the Interactive tab.
         renderInteractivePanel("em", analysis);
         const runs = [...new Set(readings.map((point) => point.run))].sort((a, b) => a - b);

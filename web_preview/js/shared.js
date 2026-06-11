@@ -83,6 +83,10 @@
       // redo/supersession info from the run log: active runs + per-redo reasons.
       // feeds the "Notes" column in the EM Report Output.
       let emRedoInfo = null;
+      // real per-channel stats from the Python EM pipeline (computed from the actual
+      // CAP files): list of {channel, ps, kpa, cap, inf} with mean/std/cov/min/max.
+      // Used by the Summary Statistics table instead of the synthesized preview.
+      let emBackendChannelStats = null;
       // shear report state (shorted channels + pass/fail) for the Shear Report Output.
       let shearReportShorted = "None";
       let shearReportResult = "Pass";
