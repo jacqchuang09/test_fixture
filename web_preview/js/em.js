@@ -382,6 +382,11 @@
       // written by the Python analyzer ARE the source of truth - this is a
       // browser-side preview only.
       function emChannelValue(point, channel) {
+        // use the REAL per-channel capacitance the backend attached from the CAP
+        // files when present; otherwise synthesize a preview value from force.
+        if (point && Array.isArray(point.channels) && point.channels.length >= channel) {
+          return Number(point.channels[channel - 1]) || 0;
+        }
         const channelScale = 0.82 + channel * 0.055;
         const runOffset = (point.run - 1) * 0.18;
         const ripple = Math.sin(point.time * (0.9 + channel * 0.08)) * 0.22;
@@ -1339,6 +1344,8 @@
           run: Number(point.run || 1),
           time: Number(point.time || 0),
           force: Number(point.force || 0),
+          // carry the real per-channel capacitance through to the stats/report.
+          channels: Array.isArray(point.channels) ? point.channels : undefined,
         })) : [];
         // capture redo/supersession info (active runs + reasons) up front.
         emRedoInfo = (analysis && analysis.redo_info) ? analysis.redo_info : null;

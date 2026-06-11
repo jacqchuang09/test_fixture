@@ -447,16 +447,42 @@ class SavedTestAnalyzer:
         # if files are missing, keep the preview useful with synthetic readings.
         if not fut_runs:
             return self._preview_readings()
+        # attach the REAL per-channel capacitance (nearest CAP sample by time within
+        # the same run) to each reading, so the browser's stats/report compute from
+        # real CAP instead of the synthesized emChannelValue. Falls back to no
+        # channels when CAP is absent (preview/demo).
+        cap_runs = getattr(self, "_cap_runs", {}) or {}
         readings = []
         for run_number, points in sorted(fut_runs.items()):
+            cap_points = cap_runs.get(run_number) or []
+            cap_times = [c["time"] for c in cap_points]
             step = max(1, math.ceil(len(points) / 500))
             for point in points[::step]:
-                readings.append({
+                reading = {
                     "run": run_number,
                     "time": round(point["time"], 4),
                     "force": round(point["force"], 5),
-                })
+                }
+                channels = self._cap_channels_at(cap_points, cap_times, point["time"])
+                if channels is not None:
+                    reading["channels"] = channels
+                readings.append(reading)
         return readings or self._preview_readings()
+
+    def _cap_channels_at(self, cap_points, cap_times, t):
+        # nearest CAP sample (by time) for a reading; returns the 8 channel values
+        # or None when there is no CAP data for this run.
+        if not cap_points:
+            return None
+        import bisect
+        i = bisect.bisect_left(cap_times, t)
+        if i <= 0:
+            best = 0
+        elif i >= len(cap_times):
+            best = len(cap_times) - 1
+        else:
+            best = i if abs(cap_times[i] - t) < abs(cap_times[i - 1] - t) else i - 1
+        return [round(float(v), 5) for v in cap_points[best]["channels"]]
 
     def _preview_readings(self):
         readings = []
