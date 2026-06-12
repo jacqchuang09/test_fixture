@@ -875,6 +875,7 @@
         setForceReadout(0);
         addCalibrationUpdate("returning to home position…");
         calibrationMoveInFlight = true;
+        setCalibrationControlsLocked(true, "HOMING", "actuator returning to home - please wait", "discarded");
         try {
           const result = await callApi("/api/home", {}, "Manual control: Returning to HOME position");
           // update the readout only once the stage has reached home.
@@ -882,6 +883,7 @@
           addCalibrationUpdate("at home position.");
         } finally {
           calibrationMoveInFlight = false;
+          setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
         }
       }
 

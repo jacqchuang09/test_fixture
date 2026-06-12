@@ -28,6 +28,24 @@
         log.scrollTop = log.scrollHeight;
       }
 
+      // Lock every calibration control while the Zaber is busy (a jog, a home, or
+      // the Fuji press), and show a wait pill, so the operator can't queue commands
+      // and flood the stage. Pass isLocked=false to re-enable and show the idle pill.
+      function setCalibrationControlsLocked(isLocked, state, message, variant = "") {
+        [
+          "calibrationMoveUpButton",
+          "calibrationMoveDownButton",
+          "calibrationHomeButton",
+          "incrementDistance",
+          "fujiFilmButton",
+          "calibrationCloseButton",
+        ].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = isLocked;
+        });
+        if (state) setStatePill("calibrationState", state, message || "", variant);
+      }
+
       function saveCalibrationIncrement() {
         const value = document.getElementById("incrementDistance").value;
         if (!value) return;
@@ -68,20 +86,20 @@
 
       async function beginFujiFilmTest() {
         const button = document.getElementById("fujiFilmButton");
-        if (fujiTimer) return;
+        if (fujiTimer || calibrationMoveInFlight) return;
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
         // live Zaber on a real rig (soft in simulation).
         if (!(await zaberStartGateOk())) return;
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
-        button.disabled = true;
-        document.getElementById("calibrationCloseButton").disabled = true;
+        // lock ALL calibration controls while the press runs - jogging mid-press
+        // would flood the stage with commands.
+        setCalibrationControlsLocked(true, "FUJI PRESS", "press running to 20 N - controls locked", "discarded");
         button.textContent = "Pushing... Target: 20 N";
 
         const finish = (text) => {
           if (fujiTimer) { clearInterval(fujiTimer); fujiTimer = null; }
-          button.disabled = false;
-          document.getElementById("calibrationCloseButton").disabled = false;
+          setCalibrationControlsLocked(false, "READY", "calibration controls ready.", "kept");
           button.textContent = "▶ Start Fuji Film Test";
           if (text) addCalibrationUpdate(text);
         };

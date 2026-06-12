@@ -268,32 +268,26 @@
         const fill = document.getElementById("analysisProgressFill");
         const copy = document.getElementById("analysisProgressCopy");
         document.getElementById("analysisProgressTitle").textContent = title;
-        fill.style.width = "0%";
-        copy.textContent = "Preparing plots and summary tables...";
+        fill.style.width = "8%";
+        copy.textContent = "Working - reading FUT and CAP files, generating plots and stats…";
         modal.showModal();
 
-        let progress = 0;
-        const steps = [
-          "Reading FUT and CAP files...",
-          "Generating plots...",
-          "Calculating summary statistics...",
-          "Saving analysis outputs...",
-        ];
+        // The backend analysis is one call with no sub-progress to report, so the
+        // bar is indeterminate: it creeps while the REAL work runs and jumps to
+        // 100% the instant it actually finishes - it reflects real start and real
+        // completion, with no artificial minimum delay.
+        let progress = 8;
         const progressTimer = setInterval(() => {
-          progress = Math.min(92, progress + 7 + Math.random() * 8);
+          progress = Math.min(90, progress + 3);
           fill.style.width = `${progress}%`;
-          copy.textContent = steps[Math.min(steps.length - 1, Math.floor(progress / 25))];
-        }, 120);
+        }, 200);
 
         try {
-          const [result] = await Promise.all([
-            Promise.resolve().then(work),
-            new Promise((resolve) => setTimeout(resolve, 1800)),
-          ]);
+          const result = await Promise.resolve().then(work);
           clearInterval(progressTimer);
           fill.style.width = "100%";
           copy.textContent = "Analysis outputs ready.";
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          await new Promise((resolve) => setTimeout(resolve, 180));
           modal.close();
           return result;
         } catch (error) {

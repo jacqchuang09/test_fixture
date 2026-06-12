@@ -348,6 +348,10 @@
           return;
         }
         calibrationMoveInFlight = true;
+        // lock the whole calibration window while the stage travels - the move is a
+        // blocking, multi-step jog and queueing more commands would flood the Zaber.
+        setCalibrationControlsLocked(true, "MOVING",
+          `actuator moving ${distance < 0 ? "up" : "down"} ${Math.abs(distance).toFixed(2)} mm - please wait`, "discarded");
         addCalibrationUpdate(`moving ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm…`);
         try {
           const result = await callApi("/api/move", { distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
@@ -361,5 +365,6 @@
           }
         } finally {
           calibrationMoveInFlight = false;
+          setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
         }
       }

@@ -665,6 +665,7 @@
         <div class="calibration-card" style="background: #f3f3f3;">
           <h3>Current Status</h3>
           <div>Position: <span id="positionReadout">17.00 mm</span></div>
+          <div id="calibrationState" class="state-pill" style="margin-top: 10px;"><span class="state-tag">READY:</span><span class="state-message">calibration window ready.</span></div>
         </div>
 
         <div class="calibration-card">
@@ -674,9 +675,9 @@
             <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
           </label>
           <div class="calibration-actions" style="margin-top: 14px;">
-            <button onclick="calibrationMove('up')">↑ Move Up</button>
-            <button onclick="calibrationMove('down')">↓ Move Down</button>
-            <button class="restart" onclick="homeAxis()">↻ Home</button>
+            <button id="calibrationMoveUpButton" onclick="calibrationMove('up')">↑ Move Up</button>
+            <button id="calibrationMoveDownButton" onclick="calibrationMove('down')">↓ Move Down</button>
+            <button id="calibrationHomeButton" class="restart" onclick="homeAxis()">↻ Home</button>
           </div>
         </div>
 
