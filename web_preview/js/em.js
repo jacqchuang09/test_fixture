@@ -182,7 +182,9 @@
         document.getElementById("emTestCloseButton").disabled = true;
 
         emRunStartedAt = performance.now();
-        setEmState("RUNNING", redoOf ? `redoing run ${redoOf}…` : `run ${emCurrentRun} running.`);
+        // the actuator + load cell take a moment to initialize; show a clear wait
+        // state (controls already locked above) until the run actually starts.
+        setEmState("STARTING", "initializing actuator and load cell - please wait…", "discarded");
 
         const result = await callApi("/api/start-run", { run_number: emCurrentRun, redo_of: redoOf, reason: redoReason });
         if (!result || !result.ok) {
@@ -201,6 +203,7 @@
         // remember the NEW run number for a redo so completion can tell the operator
         // exactly what to name the capacitance file (a redo of run 2 saves as run 4).
         emRedoNewRun = redoOf ? emCurrentRun : null;
+        setEmState("RUNNING", redoOf ? `redoing run ${redoOf}…` : `run ${emCurrentRun} running.`);
         // clear any prior readings for THIS run number (e.g. a repeat after a pause).
         emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
         emRunTimer = setInterval(pollRunStatus, 100);

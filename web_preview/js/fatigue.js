@@ -122,7 +122,9 @@
         cyclicalStartedAt = performance.now();
         setCyclicalControlsLocked(true);
         document.getElementById("cyclicalPauseButton").disabled = false;
-        setStatePill("cyclicalState", "RUNNING", "actuator cycling force bounds to simulate sensor lifespan.");
+        // the actuator + load cell take a moment to initialize; show a clear wait
+        // state (controls already locked) until the cycling actually starts.
+        setStatePill("cyclicalState", "STARTING", "initializing actuator and load cell - please wait…", "discarded");
         const result = await callApi("/api/start-cyclical", config());
         if (!result || !result.ok) {
           setCyclicalControlsLocked(false);
@@ -131,6 +133,7 @@
           setStatePill("cyclicalState", "ERROR", (result && result.message) || "could not start fatigue test.");
           return;
         }
+        setStatePill("cyclicalState", "RUNNING", "actuator cycling force bounds to simulate sensor lifespan.");
         cyclicalTimer = setInterval(pollCyclicalStatus, 100);
       }
 
