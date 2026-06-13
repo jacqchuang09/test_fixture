@@ -245,8 +245,11 @@ class RunEngine:
         STATE.stop_requested = False
         base_pos = STATE.position_mm
         target_pos = base_pos + distance
-        self._set(status="running", simulated=(axis is None), force=0.0, position=base_pos,
-                  elapsed=0.0, samples=0, trace=[], disconnect=False, safety_stop=False, message="")
+        # waiting-to-start: the load cell can still take a few seconds to initialize
+        # sometimes; show it before the open so the UI can lock + show a wait pill.
+        self._set(status="waiting", simulated=(axis is None), force=0.0, position=base_pos,
+                  elapsed=0.0, samples=0, trace=[], disconnect=False, safety_stop=False,
+                  message="initializing load cell - please wait")
         futek = _open_futek()
         simulated = (axis is None) or (futek is None)
         jog_speed = max(0.01, min(abs(float(speed)) if speed else 2.0, 25.0))   # mm/s

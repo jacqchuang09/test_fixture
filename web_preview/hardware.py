@@ -177,18 +177,28 @@ class HardwareState:
                 "message": f"[sim] Moved simulated Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."}
 
     def home(self, comport):
-        # absolute move back to the working baseline (17 mm). Blocks until the
-        # stage finishes, then reports the real final position.
+        # Home does a REAL Zaber homing: it physically drives to the home sensor and
+        # re-establishes the absolute reference, then moves to the working baseline
+        # (17 mm). It is NOT based on the GUI's tracked guess - it finds the sensor -
+        # so it always returns to the true baseline AND re-syncs the position, even
+        # if tracking had drifted or was unknown (e.g. after a disconnect).
         axis = self.axis
         if axis is not None:
             try:
+                if axis.is_parked():
+                    axis.unpark()
+                axis.home()                                   # find the sensor, re-zero the reference
                 axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
                 self._read_position()
                 return {"ok": True, "position": self.position_mm,
-                        "message": f"Moved Zaber axis to home/default position: {self.position_mm:.2f} mm."}
+                        "message": f"Homed to baseline. Current position: {self.position_mm:.2f} mm."}
             except Exception as exc:
+                # an interrupted/failed home leaves the actuator somewhere unknown;
+                # re-read the device's ACTUAL position so the GUI does not keep a
+                # stale value (which is what breaks the travel limits).
+                self._read_position()
                 return {"ok": False, "position": self.position_mm,
-                        "message": f"Zaber home failed: {exc}"}
+                        "message": f"Zaber home failed: {exc}. Re-synced position to {self.position_mm:.2f} mm - press Home again."}
         self.position_mm = HOME_MM
         return {"ok": True, "position": self.position_mm,
                 "message": f"[sim] Moved simulated Zaber axis to home/default position: {HOME_MM:g} mm."}
