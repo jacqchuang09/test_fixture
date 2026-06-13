@@ -89,15 +89,40 @@ class ZaberDisconnect(Exception):
     """Raised inside a run loop when the live Zaber stops responding (comms lost)."""
 
 
+# The live FUTEK device is CACHED. Opening it (the .NET driver detects the USB
+# device and reads its config) takes many seconds; the old code reopened it on
+# every move, which was the ~13-14 s delay before each jog started. We open it
+# once and reuse it for every move/run; it is dropped only on a read failure
+# (disconnect) so the next operation re-detects it.
+_FUTEK_CACHE = None
+
+
 def _open_futek():
-    # return a live FUTEK device, or None to simulate (Mac / no driver / FORCE_SIM).
+    # return the cached live FUTEK device (opening it once), or None to simulate
+    # (Mac / no driver / FORCE_SIM).
+    global _FUTEK_CACHE
     if os.environ.get("FORCE_SIM"):
         return None
+    if _FUTEK_CACHE is not None:
+        return _FUTEK_CACHE
     try:
         from futek_cli import FUTEKDeviceCLI
-        return FUTEKDeviceCLI()
+        _FUTEK_CACHE = FUTEKDeviceCLI()
     except Exception:
-        return None
+        _FUTEK_CACHE = None
+    return _FUTEK_CACHE
+
+
+def _close_futek():
+    # drop the cached FUTEK (after a read failure / disconnect, or on shutdown) so
+    # the next _open_futek re-detects the device.
+    global _FUTEK_CACHE
+    if _FUTEK_CACHE is not None:
+        try:
+            _FUTEK_CACHE.stop(); _FUTEK_CACHE.exit()
+        except Exception:
+            pass
+        _FUTEK_CACHE = None
 
 
 class RunEngine:
@@ -167,6 +192,9 @@ class RunEngine:
                 # polarity. Abs is applied to the tared change, not here.
                 return futek.getNormalData() * LBF_TO_N
             except Exception:
+                # the cached device stopped responding (likely unplugged); drop it so
+                # the next operation re-detects it instead of reusing a dead handle.
+                _close_futek()
                 return 0.0
         # simulation: a gently stiffening contact spring (force rises a little
         # faster as the sensor compresses, like real foam/silicone), so the
@@ -270,11 +298,9 @@ class RunEngine:
             return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,
                     "message": f"Moved to {STATE.position_mm:.2f} mm. Current position: {STATE.position_mm:.2f} mm."}
         finally:
-            if futek is not None:
-                try:
-                    futek.stop(); futek.exit()
-                except Exception:
-                    pass
+            # keep the cached FUTEK open between operations (reopening it costs
+            # many seconds); it is only dropped on a read failure / disconnect.
+            pass
 
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
@@ -435,11 +461,9 @@ class RunEngine:
             self._set(status="error", position=HOME_MM,
                       message=f"Run failed: {exc}")
         finally:
-            if futek is not None:
-                try:
-                    futek.stop(); futek.exit()
-                except Exception:
-                    pass
+            # keep the cached FUTEK open between operations (reopening it costs
+            # many seconds); it is only dropped on a read failure / disconnect.
+            pass
 
     # -- the Fuji-film calibration press ------------------------------------
 
@@ -532,11 +556,9 @@ class RunEngine:
         except Exception as exc:
             self._set(status="error", message=f"Fuji Film Test failed: {exc}")
         finally:
-            if futek is not None:
-                try:
-                    futek.stop(); futek.exit()
-                except Exception:
-                    pass
+            # keep the cached FUTEK open between operations (reopening it costs
+            # many seconds); it is only dropped on a read failure / disconnect.
+            pass
 
     # -- the fatigue (cyclical) loop ----------------------------------------
 
@@ -749,11 +771,9 @@ class RunEngine:
         except Exception as exc:
             self._set(status="error", message=f"Fatigue test failed: {exc}")
         finally:
-            if futek is not None:
-                try:
-                    futek.stop(); futek.exit()
-                except Exception:
-                    pass
+            # keep the cached FUTEK open between operations (reopening it costs
+            # many seconds); it is only dropped on a read failure / disconnect.
+            pass
 
     def _write_cyclical(self, test_folder, readings):
         # save the full per-sample fatigue stream (Index, Load Cell, Time, Cycle).
