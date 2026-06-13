@@ -655,7 +655,7 @@
     </dialog>
 
     <!-- calibration window -->
-    <dialog id="calibrationModal">
+    <dialog id="calibrationModal" class="wide-dialog">
       <div class="modal-head">
         <h2>Calibration Window</h2>
         <button id="calibrationCloseButton" class="close" onclick="stopReconnectWatch(); calibrationModal.close()">x</button>
@@ -663,28 +663,30 @@
       <div class="modal-body">
         <div id="calibrationState" class="state-pill" style="margin-bottom: 12px;"><span class="state-tag">READY:</span><span class="state-message">calibration window ready.</span></div>
         <div class="alert">Error Check Active: Movement will stop if significant force increase is detected</div>
-        <div class="calibration-card" style="background: #f3f3f3;">
-          <h3>Current Status</h3>
-          <div>Position: <span id="positionReadout">17.00 mm</span></div>
-        </div>
+        <div class="calibration-columns">
+          <div class="calibration-card">
+            <h3>Calibration Current Status</h3>
+            <div id="calibrationLog" class="status calibration-status-box">[ready] calibration window ready.</div>
+          </div>
 
-        <div class="calibration-card">
-          <h3>Manual Increment Control</h3>
-          <label>
-            <span class="label-text">Increment Distance (mm)</span>
-            <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
-          </label>
-          <div class="calibration-actions" style="margin-top: 14px;">
-            <button id="calibrationMoveUpButton" onclick="calibrationMove('up')">↑ Move Up</button>
-            <button id="calibrationMoveDownButton" onclick="calibrationMove('down')">↓ Move Down</button>
-            <button id="calibrationHomeButton" class="restart" onclick="homeAxis()">↻ Home</button>
+          <div class="calibration-card">
+            <h3>Manual Increment Control</h3>
+            <div class="calibration-position">Position: <span id="positionReadout">17.00 mm</span></div>
+            <label>
+              <span class="label-text">Increment Distance (mm)</span>
+              <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
+            </label>
+            <div class="calibration-actions" style="margin-top: 14px;">
+              <button id="calibrationMoveUpButton" onclick="calibrationMove('up')">↑ Move Up</button>
+              <button id="calibrationMoveDownButton" onclick="calibrationMove('down')">↓ Move Down</button>
+              <button id="calibrationHomeButton" class="restart" onclick="homeAxis()">↻ Home</button>
+            </div>
+            <button id="fujiFilmButton" class="success fuji-button" style="margin-top: 16px; width: 100%;" onclick="beginFujiFilmTest()">
+              ▶ Start Fuji Film Test
+            </button>
+            <button id="calibrationPauseButton" class="pause-button" style="margin-top: 10px; width: 100%; min-height: 46px;" onclick="pauseCalibration()" disabled>Ⅱ Pause</button>
           </div>
         </div>
-
-        <button id="fujiFilmButton" class="success fuji-button" style="margin-top: 16px;" onclick="beginFujiFilmTest()">
-          ▶ Start Fuji Film Test
-        </button>
-        <div id="calibrationLog" class="status calibration-log">[ready] calibration window ready.</div>
       </div>
     </dialog>
 

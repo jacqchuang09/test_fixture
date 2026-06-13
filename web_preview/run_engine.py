@@ -556,8 +556,10 @@ class RunEngine:
             init_force = None
             while True:
                 if STATE.stop_requested:
-                    self._stop_axis(axis); self._home(axis)
-                    self._set(status="stopped", position=HOME_MM, message="Fuji Film Test stopped.")
+                    # calibration pause: stop in place, do NOT home/reset.
+                    self._stop_axis(axis)
+                    self._set(status="stopped", position=STATE.position_mm,
+                              message="Fuji Film Test paused - actuator held in place.")
                     return
                 if axis is None:
                     depth += descend * SAMPLE_DT

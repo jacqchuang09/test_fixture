@@ -1628,6 +1628,31 @@
         font-size: 16px;
       }
 
+      /* calibration window: output box on the left, controls on the right. */
+      .calibration-columns {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 16px;
+        margin-top: 16px;
+        align-items: start;
+      }
+
+      .calibration-columns .calibration-card {
+        margin-top: 0;
+      }
+
+      .calibration-status-box {
+        margin-top: 0;
+        min-height: 300px;
+        max-height: 360px;
+      }
+
+      .calibration-position {
+        margin: 0 0 14px;
+        font-size: 15px;
+        color: var(--muted);
+      }
+
       .calibration-actions {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));

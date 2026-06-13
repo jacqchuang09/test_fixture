@@ -43,7 +43,19 @@
           const el = document.getElementById(id);
           if (el) el.disabled = isLocked;
         });
+        // Pause is the opposite of the rest (enabled only WHILE busy, like the EM
+        // pause) so the operator can stop a jog or the Fuji press at any time.
+        const pauseBtn = document.getElementById("calibrationPauseButton");
+        if (pauseBtn) pauseBtn.disabled = !isLocked;
         if (state) setStatePill("calibrationState", state, message || "", variant);
+      }
+
+      // Pause a running jog or Fuji press. Unlike the EM pause, this does NOT home
+      // the actuator - it stops it in place and leaves it where it is.
+      function pauseCalibration() {
+        document.getElementById("calibrationPauseButton").disabled = true;
+        callApi("/api/stop");
+        addCalibrationUpdate("paused - actuator stopped and held in place.");
       }
 
       function saveCalibrationIncrement() {
@@ -90,6 +102,8 @@
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
         // live Zaber on a real rig (soft in simulation).
         if (!(await zaberStartGateOk())) return;
+        // home the actuator from wherever it is before the press starts.
+        if (!(await homeBeforeTest())) return;
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press
