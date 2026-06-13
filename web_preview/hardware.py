@@ -201,6 +201,29 @@ class HardwareState:
         return {"ok": True, "position": self.position_mm,
                 "message": f"[sim] Moved simulated Zaber axis to home/default position: {HOME_MM:g} mm."}
 
+    def set_baseline_position(self, mm=None):
+        # Define the actuator's CURRENT physical position as a known value (the 17 mm
+        # baseline by default). Use this when the device's absolute reference is not
+        # established: the operator places the actuator at the known baseline, then
+        # this sets the reference there (Zaber "set pos") WITHOUT homing into the
+        # load cell. After this, get_position and the travel limits are correct.
+        target = float(mm) if mm is not None else HOME_MM
+        axis = self.axis
+        if axis is None:
+            self.position_mm = target
+            return {"ok": True, "position": target,
+                    "message": f"[sim] Baseline reference set to {target:g} mm."}
+        try:
+            from zaber_motion import Units
+            native = axis.settings.convert_to_native_units("pos", target, Units.LENGTH_MILLIMETRES)
+            axis.generic_command(f"set pos {int(round(native))}")
+            self._read_position()
+            return {"ok": True, "position": self.position_mm,
+                    "message": f"Baseline set: the actuator's current position is now {self.position_mm:.2f} mm."}
+        except Exception as exc:
+            return {"ok": False, "position": self.position_mm,
+                    "message": f"Could not set baseline reference: {exc}"}
+
     def stop(self):
         self.stop_requested = True
         axis = self.axis

@@ -37,6 +37,7 @@
           "calibrationMoveDownButton",
           "calibrationHomeButton",
           "incrementDistance",
+          "calibrationSetBaselineButton",
           "fujiFilmButton",
           "calibrationCloseButton",
         ].forEach((id) => {
@@ -48,6 +49,19 @@
         const pauseBtn = document.getElementById("calibrationPauseButton");
         if (pauseBtn) pauseBtn.disabled = !isLocked;
         if (state) setStatePill("calibrationState", state, message || "", variant);
+      }
+
+      // Set the device's reference: define the actuator's CURRENT position as the
+      // 17 mm baseline. Use when the readout is wrong - it does not move the actuator.
+      async function setCalibrationBaseline() {
+        if (calibrationMoveInFlight) return;
+        const ok = await promptConfirm(
+          "Confirm the actuator is physically at the 17 mm baseline (retracted to the known marked position). This tells the device its current position is 17 mm - it does NOT move the actuator. Continue?",
+          { title: "Set baseline reference", confirmLabel: "Set 17 mm here", cancelLabel: "Cancel" });
+        if (!ok) return;
+        const result = await callApi("/api/set-baseline", { mm: 17 });
+        if (result && typeof result.position === "number") setPositionReadout(result.position);
+        addCalibrationUpdate((result && result.message) || "baseline reference set.");
       }
 
       // Pause a running jog or Fuji press. Unlike the EM pause, this does NOT home

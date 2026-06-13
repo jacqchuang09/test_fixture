@@ -159,6 +159,11 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/home":
             return STATE.home(comport)
 
+        if path == "/api/set-baseline":
+            # define the actuator's current physical position as a known value (the
+            # 17 mm baseline) to establish the reference without homing into the cell.
+            return STATE.set_baseline_position(payload.get("mm"))
+
         if path == "/api/pause":
             return STATE.pause(comport)
 

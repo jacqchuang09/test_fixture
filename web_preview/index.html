@@ -672,6 +672,7 @@
           <div class="calibration-card">
             <h3>Manual Increment Control</h3>
             <div class="calibration-position">Position: <span id="positionReadout">17.00 mm</span></div>
+            <button id="calibrationSetBaselineButton" class="restart" style="width: 100%; margin-bottom: 14px; min-height: 40px;" onclick="setCalibrationBaseline()" title="If the readout is wrong, place the actuator at the known 17 mm baseline and click this to set the reference (does not move the actuator).">Set current position = 17 mm baseline</button>
             <label>
               <span class="label-text">Increment Distance (mm)</span>
               <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
