@@ -81,20 +81,19 @@ class HardwareState:
             pass
 
     def _home_reference(self):
-        # Establish the actuator's ABSOLUTE position with a real Zaber homing: drive
-        # to the home sensor (the retracted end, away from the sensor - safe) and
-        # zero the reference, then move to the working baseline (HOME_MM). Done once
-        # on connect so the device and GUI agree on position for the whole session,
-        # which is what makes the travel limits reliable no matter where the actuator
-        # was left. Returns True if it homed.
+        # On connect, move to the working baseline (17 mm) - the retracted,
+        # load-cell-safe position - and rely on the actuator's encoder for absolute
+        # position (which the GUI reads via _read_position). We do NOT axis.home()
+        # here: on this fixture the device's home sensor is past the baseline, into
+        # the load cell, so a real homing would press the sensor into its limit.
         axis = self.axis
         if axis is None:
             return False
         try:
-            axis.home()                                  # blocks until homed
-            axis.move_absolute(HOME_MM, _mm_unit())       # go to the working baseline
+            axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
             return True
         except Exception:
+            self._read_position()   # re-sync if the move was interrupted
             return False
 
     def connect_zaber(self, comport):
@@ -129,9 +128,9 @@ class HardwareState:
             self.comms_lost = False
             self.connection_lost = False
             self._set_default_speed(2.0)   # cap the actuator's default move speed at 2 mm/s
-            homed = self._home_reference()  # establish absolute position (real homing)
+            homed = self._home_reference()  # move to the load-cell-safe baseline
             self._read_position()
-            home_note = " Homed to baseline." if homed else ""
+            home_note = " Moved to baseline." if homed else ""
             return {
                 "ok": True, "connected": True, "comport": comport,
                 "message": f"Connected to Zaber on {comport}.{home_note} Current position: {self.position_mm:.2f} mm.",
@@ -177,28 +176,26 @@ class HardwareState:
                 "message": f"[sim] Moved simulated Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."}
 
     def home(self, comport):
-        # Home does a REAL Zaber homing: it physically drives to the home sensor and
-        # re-establishes the absolute reference, then moves to the working baseline
-        # (17 mm). It is NOT based on the GUI's tracked guess - it finds the sensor -
-        # so it always returns to the true baseline AND re-syncs the position, even
-        # if tracking had drifted or was unknown (e.g. after a disconnect).
+        # Move to the working baseline (17 mm) - the retracted position, AWAY from
+        # the load cell. We deliberately do NOT call axis.home(): on this fixture the
+        # device's home sensor sits PAST the baseline, into the load cell, so a real
+        # homing presses the cell into its limit (MovementInterruptedException) and
+        # could damage it. move_absolute is a device-absolute command using the
+        # encoder, not the GUI's tracked guess, so it returns to the true baseline.
         axis = self.axis
         if axis is not None:
             try:
-                if axis.is_parked():
-                    axis.unpark()
-                axis.home()                                   # find the sensor, re-zero the reference
                 axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
                 self._read_position()
                 return {"ok": True, "position": self.position_mm,
-                        "message": f"Homed to baseline. Current position: {self.position_mm:.2f} mm."}
+                        "message": f"Moved to baseline. Current position: {self.position_mm:.2f} mm."}
             except Exception as exc:
-                # an interrupted/failed home leaves the actuator somewhere unknown;
+                # an interrupted/failed move leaves the actuator somewhere unknown;
                 # re-read the device's ACTUAL position so the GUI does not keep a
-                # stale value (which is what breaks the travel limits).
+                # stale value (a stale value is what breaks the travel limits).
                 self._read_position()
                 return {"ok": False, "position": self.position_mm,
-                        "message": f"Zaber home failed: {exc}. Re-synced position to {self.position_mm:.2f} mm - press Home again."}
+                        "message": f"Zaber home failed: {exc}. Re-synced position to {self.position_mm:.2f} mm."}
         self.position_mm = HOME_MM
         return {"ok": True, "position": self.position_mm,
                 "message": f"[sim] Moved simulated Zaber axis to home/default position: {HOME_MM:g} mm."}
