@@ -128,12 +128,13 @@ class HardwareState:
             self.comms_lost = False
             self.connection_lost = False
             self._set_default_speed(2.0)   # cap the actuator's default move speed at 2 mm/s
-            homed = self._home_reference()  # move to the load-cell-safe baseline
+            # Do NOT auto-move on connect: the device's absolute reference may not be
+            # established, so a move_absolute would drive against a wrong reference.
+            # Just read the position the device reports and leave the actuator put.
             self._read_position()
-            home_note = " Moved to baseline." if homed else ""
             return {
                 "ok": True, "connected": True, "comport": comport,
-                "message": f"Connected to Zaber on {comport}.{home_note} Current position: {self.position_mm:.2f} mm.",
+                "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm:.2f} mm.",
             }
 
         self.cli = None
