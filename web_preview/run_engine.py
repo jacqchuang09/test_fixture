@@ -244,6 +244,15 @@ class RunEngine:
         axis = STATE.axis
         futek = _open_futek()
         simulated = (axis is None) or (futek is None)
+        # print the actuator's default move speed (its "maxspeed" setting) to the
+        # terminal - this is the speed a calibration jog uses, since we don't set one.
+        if axis is not None:
+            try:
+                from zaber_motion import Units
+                default_speed = axis.settings.get("maxspeed", Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                print(f"[calibration] Zaber default move speed (maxspeed): {default_speed:.4f} mm/s")
+            except Exception as exc:
+                print(f"[calibration] could not read Zaber default move speed: {exc}")
         STATE.stop_requested = False
         base_pos = STATE.position_mm
         t0 = time.time()
