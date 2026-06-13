@@ -150,10 +150,11 @@ class Handler(SimpleHTTPRequestHandler):
             return result
 
         if path == "/api/move":
-            # force-monitored stepped jog: halts mid-move if the load cell crosses
-            # the ceiling, so a manual press can't crush the sensor or fixture.
+            # smooth, force-monitored jog: one continuous velocity move that halts if
+            # the load cell crosses the ceiling, so a manual press can't crush the
+            # sensor. Optional speed (mm/s); defaults to a gentle jog speed.
             from run_engine import ENGINE
-            return ENGINE.manual_move(float(payload.get("distance", 0)))
+            return ENGINE.manual_move(float(payload.get("distance", 0)), payload.get("speed"))
 
         if path == "/api/home":
             return STATE.home(comport)

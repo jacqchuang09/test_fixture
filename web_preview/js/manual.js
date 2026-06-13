@@ -151,11 +151,16 @@
         // the actuator, so the graphs update live (no faked values, no fixed timer).
         setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
-        setManualState("MOVING", `${description}. controls locked while the actuator moves.`);
+        setManualState("WAITING TO START", "initializing load cell - please wait…");
         const t0 = performance.now();
         manualMotionTimer = setInterval(async () => {
           const status = await callApi("/api/run-status");
           if (!status || !status.ok) return;
+          if (status.status === "waiting") {
+            // load cell still initializing - nothing is moving yet.
+            setManualState("WAITING TO START", "initializing load cell - please wait…");
+            return;
+          }
           const force = Number(status.force || 0);
           if (typeof status.position === "number") {
             manualPosition = status.position;
@@ -170,7 +175,7 @@
           setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
         }, 100);
 
-        const result = await callApi("/api/move", { distance });
+        const result = await callApi("/api/move", { distance, speed: manualActuatorSpeed() });
 
         if (manualMotionTimer) { clearInterval(manualMotionTimer); manualMotionTimer = null; }
         if (result && typeof result.position === "number") {
@@ -348,14 +353,25 @@
           return;
         }
         calibrationMoveInFlight = true;
-        // lock the whole calibration window while the stage travels - the move is a
-        // blocking, multi-step jog and queueing more commands would flood the Zaber.
-        setCalibrationControlsLocked(true, "MOVING",
-          `actuator moving ${distance < 0 ? "up" : "down"} ${Math.abs(distance).toFixed(2)} mm - please wait`, "discarded");
+        // lock the whole calibration window while the stage travels (queueing more
+        // commands would flood the Zaber), and show WAITING TO START while the load
+        // cell initializes, then MOVING during the continuous travel.
+        setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
         addCalibrationUpdate(`moving ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm…`);
+        const pollTimer = setInterval(async () => {
+          const status = await callApi("/api/run-status");
+          if (!status || !status.ok) return;
+          if (typeof status.position === "number") setPositionReadout(status.position);
+          if (status.status === "running") {
+            setCalibrationControlsLocked(true, "MOVING",
+              `actuator moving - ${Number(status.force || 0).toFixed(2)} N at ${Number(status.position || 0).toFixed(2)} mm`, "discarded");
+          } else if (status.status === "waiting") {
+            setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
+          }
+        }, 100);
         try {
           const result = await callApi("/api/move", { distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
-          // update the readout only once the stage has finished moving.
+          // update the readout once the stage has finished moving.
           if (result && result.stopped_for_safety) {
             if (typeof result.position === "number") setPositionReadout(result.position);
             addCalibrationUpdate(result.message || "Force limit reached. Move stopped for safety.");
@@ -364,6 +380,7 @@
             addCalibrationUpdate(`move complete. position ${result.position.toFixed(2)} mm.`);
           }
         } finally {
+          clearInterval(pollTimer);
           calibrationMoveInFlight = false;
           setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
         }
