@@ -28,7 +28,24 @@ def main():
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
 
-    window = webview.create_window("Zaber / FUTEK Test GUI", url, width=1280, height=860)
+    # Size the window to the operator's screen and open it at the top, so the whole
+    # GUI fits the full height of the screen (the old fixed 860 px got cut off on
+    # shorter screens). Keeps a sensible width; leaves room for the OS taskbar/title
+    # bar. Falls back to the fixed size if the screen can't be read.
+    win_width, win_height, win_x, win_y = 1280, 860, None, None
+    try:
+        screen = webview.screens[0]
+        win_width = min(1280, screen.width - 40)
+        win_height = max(700, screen.height - 80)
+        win_x = max(0, (screen.width - win_width) // 2)
+        win_y = 0
+    except Exception:
+        pass
+
+    window = webview.create_window(
+        "Zaber / FUTEK Test GUI", url,
+        width=win_width, height=win_height, x=win_x, y=win_y,
+    )
 
     # let the backend's folder button use the native pywebview dialog.
     run_web_gui.set_desktop_window(window)
