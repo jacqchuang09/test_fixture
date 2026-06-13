@@ -104,9 +104,13 @@ class HardwareState:
             self._read_position()   # re-sync if the move was interrupted
             return False
 
-    def connect_zaber(self, comport):
+    def connect_zaber(self, comport, set_reference=True):
         # connect on port selection, like emilio's trace_comport. Falls back to
         # a simulated stage (still returns ok=True) when no hardware responds.
+        # set_reference: on a user-initiated connect we define the actuator's current
+        # position as the 17 mm baseline (the operator connects with it parked there),
+        # which fixes the device's absolute reference. An auto-reconnect passes False
+        # so it does NOT redefine the reference at an unknown mid-run position.
         self.stop_requested = False
         self.pause_requested = False
         self.comport = comport
@@ -136,13 +140,18 @@ class HardwareState:
             self.comms_lost = False
             self.connection_lost = False
             self._set_default_speed(2.0)   # cap the actuator's default move speed at 2 mm/s
-            # Do NOT auto-move on connect: the device's absolute reference may not be
-            # established, so a move_absolute would drive against a wrong reference.
-            # Just read the position the device reports and leave the actuator put.
+            ref_note = ""
+            if set_reference:
+                # define the current physical position as the 17 mm baseline (the
+                # operator connects with the actuator parked there). This corrects the
+                # device's absolute reference WITHOUT homing into the load cell, so
+                # position and travel limits are right for the session. No motion.
+                self.set_baseline_position(HOME_MM)
+                ref_note = f" Reference set to {HOME_MM:g} mm baseline."
             self._read_position()
             return {
                 "ok": True, "connected": True, "comport": comport,
-                "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm:.2f} mm.",
+                "message": f"Connected to Zaber on {comport}.{ref_note} Current position: {self.position_mm:.2f} mm.",
             }
 
         self.cli = None
@@ -163,7 +172,9 @@ class HardwareState:
         if not self.comport:
             return {"ok": True, "connected": False, "comport": None,
                     "message": "No COM port has been selected yet."}
-        return self.connect_zaber(self.comport)
+        # auto-reconnect must NOT redefine the reference (the actuator may be mid-run,
+        # not at the baseline) - keep whatever reference the session already had.
+        return self.connect_zaber(self.comport, set_reference=False)
 
     def move(self, comport, distance):
         # relative jog, matching the gui's incremental move buttons. Blocks until

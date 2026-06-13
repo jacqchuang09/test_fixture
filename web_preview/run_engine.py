@@ -408,6 +408,7 @@ class RunEngine:
 
         try:
             # --- gap-set move toward the sensor (force-monitored) ---
+            self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
             depth = 0.0
@@ -557,6 +558,7 @@ class RunEngine:
         idx = 0
         prev_force = None
         try:
+            self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
             depth = 0.0
@@ -719,6 +721,7 @@ class RunEngine:
 
         try:
             # approach the sensor (same force-monitored gap move as the EM press).
+            self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
 
