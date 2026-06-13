@@ -120,7 +120,7 @@
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press
         // would flood the stage with commands.
-        setCalibrationControlsLocked(true, "FUJI PRESS", "press running to 20 N - controls locked", "discarded");
+        setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
         button.textContent = "Pushing... Target: 20 N";
 
         const finish = (text) => {
@@ -141,8 +141,15 @@
         fujiTimer = setInterval(async () => {
           const status = await callApi("/api/run-status");
           if (!status || !status.ok) return;
+          if (status.status === "waiting") {
+            setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
+            return;
+          }
           const force = Number(status.force || 0);
           const elapsed = Number(status.elapsed || 0);
+          if (status.status === "running") {
+            setCalibrationControlsLocked(true, "FUJI PRESS", `pressing to 20 N - ${force.toFixed(1)} N`, "discarded");
+          }
           if (status.status === "running" || status.status === "completed") {
             setForceReadout(force);
             calibrationLines.push(`${elapsed.toFixed(3)} s | ${force.toFixed(1)} N`);

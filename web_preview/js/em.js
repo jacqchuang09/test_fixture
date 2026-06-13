@@ -31,8 +31,13 @@
 
       function setEmState(state, message = state, variant = "") {
         setStatePill(emStateEl, state, message === state ? "" : message, variant);
-        emStatusLines.push(`[${stamp()}] ${state}: ${message}`);
-        setEmStatus(emStatusLines);
+        // don't re-log an identical consecutive state (the poll may set the same
+        // WAITING/RUNNING pill every tick); just refresh the pill.
+        const line = `${state}: ${message}`;
+        if (!(emStatusLines[emStatusLines.length - 1] || "").endsWith(line)) {
+          emStatusLines.push(`[${stamp()}] ${line}`);
+          setEmStatus(emStatusLines);
+        }
       }
 
       function appendEmTableHeader() {
@@ -184,7 +189,7 @@
         emRunStartedAt = performance.now();
         // the actuator + load cell take a moment to initialize; show a clear wait
         // state (controls already locked above) until the run actually starts.
-        setEmState("STARTING", "initializing actuator and load cell - please wait…", "discarded");
+        setEmState("WAITING TO START", "initializing actuator and load cell - please wait…");
 
         const result = await callApi("/api/start-run", { run_number: emCurrentRun, redo_of: redoOf, reason: redoReason });
         if (!result || !result.ok) {
@@ -203,7 +208,7 @@
         // remember the NEW run number for a redo so completion can tell the operator
         // exactly what to name the capacitance file (a redo of run 2 saves as run 4).
         emRedoNewRun = redoOf ? emCurrentRun : null;
-        setEmState("RUNNING", redoOf ? `redoing run ${redoOf}…` : `run ${emCurrentRun} running.`);
+        // the poll flips WAITING TO START -> RUNNING once the actuator actually moves.
         // clear any prior readings for THIS run number (e.g. a repeat after a pause).
         emReadings = emReadings.filter((point) => point.run !== emCurrentRun);
         emRunTimer = setInterval(pollRunStatus, 100);
@@ -213,8 +218,16 @@
       async function pollRunStatus() {
         const status = await callApi("/api/run-status");
         if (!status || !status.ok) return;
+        if (status.status === "waiting") {
+          // command accepted but the actuator hasn't started moving yet (load-cell init).
+          setEmState("WAITING TO START", "initializing actuator and load cell - please wait…");
+          return;
+        }
         const elapsed = Number(status.elapsed || 0);
         const force = Number(status.force || 0);
+        if (status.status === "running") {
+          setEmState("RUNNING", `run ${emCurrentRun} running.`);
+        }
         if (status.status === "running" || status.status === "completed") {
           // rebuild this run's readings from the backend's dense 100 Hz trace so
           // the live force graph is smooth (not one point per poll).

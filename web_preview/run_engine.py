@@ -160,8 +160,11 @@ class RunEngine:
         # hundred ms; without this, the first UI poll after start-run could read the
         # previous run's stale "paused"/"completed" status and tear down its own poll
         # loop, leaving the actuator running with a frozen graph.
-        self._set(status="running", run=int(run_number), force=0.0, samples=0,
-                  message="", position=HOME_MM, disconnect=False, safety_stop=False)
+        # "waiting" until the run thread is past the load-cell init and about to move
+        # (the thread flips it to "running"); the UI shows a wait pill meanwhile.
+        self._set(status="waiting", run=int(run_number), force=0.0, samples=0,
+                  message="initializing actuator and load cell - please wait",
+                  position=HOME_MM, disconnect=False, safety_stop=False)
         self._thread = threading.Thread(
             target=self._run,
             args=(int(run_number), Path(test_folder), float(surface_area_mm2), redo_of, reason),
@@ -521,9 +524,10 @@ class RunEngine:
         STATE.stop_requested = False
         STATE.pause_requested = False
         STATE.comms_lost = False
-        # mark running synchronously (see note in start()): avoids a poll reading the
-        # previous test's stale status before _run_fuji_film's hardware init finishes.
-        self._set(status="running", force=0.0, samples=0, message="",
+        # "waiting" until the run thread is past the load-cell init and about to move
+        # (the thread flips it to "running"); the UI shows a wait pill meanwhile.
+        self._set(status="waiting", force=0.0, samples=0,
+                  message="initializing actuator and load cell - please wait",
                   position=HOME_MM, disconnect=False, safety_stop=False)
         self._thread = threading.Thread(
             target=self._run_fuji_film, args=(float(surface_area_mm2),), daemon=True)
@@ -618,9 +622,10 @@ class RunEngine:
         STATE.stop_requested = False
         STATE.pause_requested = False
         STATE.comms_lost = False
-        # mark running synchronously (see note in start()): avoids a poll reading the
-        # previous test's stale status before _run_cyclical's hardware init finishes.
-        self._set(status="running", force=0.0, samples=0, message="",
+        # "waiting" until the run thread is past the load-cell init and about to move
+        # (the thread flips it to "running"); the UI shows a wait pill meanwhile.
+        self._set(status="waiting", force=0.0, samples=0,
+                  message="initializing actuator and load cell - please wait",
                   position=HOME_MM, disconnect=False, safety_stop=False)
         self._thread = threading.Thread(
             target=self._run_cyclical,
