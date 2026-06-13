@@ -167,7 +167,7 @@
               // safety trip: the engine already stopped and homed. Dialog, then
               // restart the Fuji Film test on Continue.
               addCalibrationUpdate(status.message || "Fuji Film Test stopped for safety.");
-              showSafetyStopDialog(status.message, () => beginFujiFilmTest());
+              showSafetyStopDialog(status.message);   // no auto-restart - actuator homed; press Start to run again
             }
           }
         }, 100);

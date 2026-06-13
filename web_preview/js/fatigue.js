@@ -180,7 +180,7 @@
           // stopped and homed. Dialog, then restart the fatigue test on Continue.
           document.getElementById("cyclicalStartButton").disabled = false;
           setStatePill("cyclicalState", "STOPPED", status.message || "Fatigue test stopped for safety.");
-          showSafetyStopDialog(status.message, () => startCyclicalTest());
+          showSafetyStopDialog(status.message);   // no auto-restart - press Start to run again
           return;
         }
         document.getElementById("cyclicalStartButton").disabled = false;

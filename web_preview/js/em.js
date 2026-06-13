@@ -254,7 +254,7 @@
             // (same run number, fresh data collection).
             document.getElementById("emStartButton").disabled = false;
             setEmState("STOPPED - NOT SAVED", status.message || "Run stopped for safety.", "discarded");
-            showSafetyStopDialog(status.message, () => restartCurrentEmRun());
+            showSafetyStopDialog(status.message);   // no auto-restart - actuator homed; press Start to redo the run
           } else {
             // a manual stop: this run's data was not saved, so use the same amber
             // "discarded" language.

@@ -166,11 +166,23 @@
 
       // variant: "" neutral, "kept" (green, data saved), "discarded" (amber, no
       // data saved) - so the operator can tell an auto-pause from a user pause.
+      // Map a state name to a pill color so the SAME state looks the same in every
+      // window: green = good/done, amber = busy/attention, neutral = ready/idle.
+      function statePillVariant(state) {
+        const s = String(state || "").toUpperCase();
+        if (/SAVED|COMPLETE|RECONNECTED/.test(s)) return "kept";
+        if (/MOVING|WAITING|STARTING|RUNNING|HOMING|PRESS|FUJI|PAUSE|STOP|ERROR|NOT SAVED|DISCONNECT|LIMIT|RETURNING|SPIKE/.test(s)) return "discarded";
+        return "";
+      }
+
       function setStatePill(elementOrId, state, message = "", variant = "") {
         const element = typeof elementOrId === "string" ? document.getElementById(elementOrId) : elementOrId;
         if (!element) return;
         element.classList.remove("state-kept", "state-discarded");
-        if (variant) element.classList.add(`state-${variant}`);
+        // color is derived from the state name so it is consistent across windows;
+        // the per-call variant is ignored on purpose.
+        const v = statePillVariant(state);
+        if (v) element.classList.add(`state-${v}`);
         element.innerHTML = "";
         const tag = document.createElement("span");
         tag.className = "state-tag";
@@ -205,7 +217,10 @@
 
       function setPositionReadout(value) {
         currentPosition = value;
-        document.getElementById("positionReadout").textContent = `${value.toFixed(2)} mm`;
+        // the calibration window shows position in its status box, not a separate
+        // readout, so the element may not exist - update it only if present.
+        const el = document.getElementById("positionReadout");
+        if (el) el.textContent = `${value.toFixed(2)} mm`;
       }
 
       function setForceReadout(value) {
