@@ -151,16 +151,11 @@
         // the actuator, so the graphs update live (no faked values, no fixed timer).
         setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
-        setManualState("WAITING TO START", "initializing load cell - please wait…");
+        setManualState("MOVING", `${description}. controls locked while the actuator moves.`);
         const t0 = performance.now();
         manualMotionTimer = setInterval(async () => {
           const status = await callApi("/api/run-status");
           if (!status || !status.ok) return;
-          if (status.status === "waiting") {
-            // load cell still initializing - nothing is moving yet.
-            setManualState("WAITING TO START", "initializing load cell - please wait…");
-            return;
-          }
           const force = Number(status.force || 0);
           if (typeof status.position === "number") {
             manualPosition = status.position;
@@ -356,18 +351,15 @@
         // lock the whole calibration window while the stage travels (queueing more
         // commands would flood the Zaber), and show WAITING TO START while the load
         // cell initializes, then MOVING during the continuous travel.
-        setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
+        setCalibrationControlsLocked(true, "MOVING",
+          `actuator moving ${distance < 0 ? "up" : "down"} ${Math.abs(distance).toFixed(2)} mm`, "discarded");
         addCalibrationUpdate(`moving ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm…`);
         const pollTimer = setInterval(async () => {
           const status = await callApi("/api/run-status");
           if (!status || !status.ok) return;
           if (typeof status.position === "number") setPositionReadout(status.position);
-          if (status.status === "running") {
-            setCalibrationControlsLocked(true, "MOVING",
-              `actuator moving - ${Number(status.force || 0).toFixed(2)} N at ${Number(status.position || 0).toFixed(2)} mm`, "discarded");
-          } else if (status.status === "waiting") {
-            setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
-          }
+          setCalibrationControlsLocked(true, "MOVING",
+            `actuator moving - ${Number(status.force || 0).toFixed(2)} N at ${Number(status.position || 0).toFixed(2)} mm`, "discarded");
         }, 100);
         try {
           const result = await callApi("/api/move", { distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);

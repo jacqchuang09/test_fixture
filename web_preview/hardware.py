@@ -67,6 +67,19 @@ class HardwareState:
             self.comms_lost = True
         return self.position_mm
 
+    def _set_default_speed(self, mm_s):
+        # set the actuator's default move speed (its "maxspeed" setting). Moves that
+        # don't specify a velocity (home, the gap-set approach, manual jogs) use this;
+        # the stock default is ~7.26 mm/s, which is too fast for the bench, so cap it.
+        axis = self.axis
+        if axis is None:
+            return
+        try:
+            from zaber_motion import Units
+            axis.settings.set("maxspeed", float(mm_s), Units.VELOCITY_MILLIMETRES_PER_SECOND)
+        except Exception:
+            pass
+
     def connect_zaber(self, comport):
         # connect on port selection, like emilio's trace_comport. Falls back to
         # a simulated stage (still returns ok=True) when no hardware responds.
@@ -98,6 +111,7 @@ class HardwareState:
             self.simulated = False
             self.comms_lost = False
             self.connection_lost = False
+            self._set_default_speed(2.0)   # cap the actuator's default move speed at 2 mm/s
             self._read_position()
             return {
                 "ok": True, "connected": True, "comport": comport,
