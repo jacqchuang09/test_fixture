@@ -102,8 +102,6 @@
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
         // live Zaber on a real rig (soft in simulation).
         if (!(await zaberStartGateOk())) return;
-        // home the actuator from wherever it is before the press starts.
-        if (!(await homeBeforeTest())) return;
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press

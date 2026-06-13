@@ -80,6 +80,23 @@ class HardwareState:
         except Exception:
             pass
 
+    def _home_reference(self):
+        # Establish the actuator's ABSOLUTE position with a real Zaber homing: drive
+        # to the home sensor (the retracted end, away from the sensor - safe) and
+        # zero the reference, then move to the working baseline (HOME_MM). Done once
+        # on connect so the device and GUI agree on position for the whole session,
+        # which is what makes the travel limits reliable no matter where the actuator
+        # was left. Returns True if it homed.
+        axis = self.axis
+        if axis is None:
+            return False
+        try:
+            axis.home()                                  # blocks until homed
+            axis.move_absolute(HOME_MM, _mm_unit())       # go to the working baseline
+            return True
+        except Exception:
+            return False
+
     def connect_zaber(self, comport):
         # connect on port selection, like emilio's trace_comport. Falls back to
         # a simulated stage (still returns ok=True) when no hardware responds.
@@ -112,10 +129,12 @@ class HardwareState:
             self.comms_lost = False
             self.connection_lost = False
             self._set_default_speed(2.0)   # cap the actuator's default move speed at 2 mm/s
+            homed = self._home_reference()  # establish absolute position (real homing)
             self._read_position()
+            home_note = " Homed to baseline." if homed else ""
             return {
                 "ok": True, "connected": True, "comport": comport,
-                "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm:.2f} mm.",
+                "message": f"Connected to Zaber on {comport}.{home_note} Current position: {self.position_mm:.2f} mm.",
             }
 
         self.cli = None

@@ -160,12 +160,6 @@
         // before any motion. Stays soft in simulation (no real load cell).
         if (!(await zaberStartGateOk())) return;
 
-        // Before the FIRST run of the test, home the actuator from wherever it is so
-        // the test starts from a known baseline (later runs already finish at home).
-        if (emCompletedRuns === 0) {
-          if (!(await homeBeforeTest())) return;
-        }
-
         // Redo mode: data is never overwritten - this creates a NEW run that
         // supersedes the chosen one. A reason is required (recorded in the report).
         const cfg = config();

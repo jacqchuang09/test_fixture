@@ -361,18 +361,6 @@
         if (confirmDialogResolver) { confirmDialogResolver(!!value); confirmDialogResolver = null; }
       }
 
-      // Before a press test (calibration Fuji, EM) prompt the operator to home the
-      // actuator from wherever it currently is, so the test starts from a known
-      // baseline. Resolves true if homed (proceed), false if cancelled.
-      async function homeBeforeTest() {
-        const ok = await promptConfirm(
-          "The actuator will return to its home baseline (17 mm) before this test, so it starts from a known position. Home now and continue?",
-          { title: "Home the actuator first", confirmLabel: "Home and continue", cancelLabel: "Cancel" });
-        if (!ok) return false;
-        await callApi("/api/home", {});
-        return true;
-      }
-
       // prompt the user for a required free-text reason (e.g. redoing a run).
       // resolves to the trimmed reason, or null if cancelled / left blank.
       let reasonDialogResolver = null;
