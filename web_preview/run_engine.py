@@ -17,6 +17,7 @@ from hardware import STATE, _mm_unit
 HOME_MM = 17.0              # retracted / home position
 GAP_MM = 10.95              # initial travel toward the sensor before the press
 SAMPLE_DT = 0.010           # 100 Hz sampling - record force every 10 ms
+JOG_POLL_DT = 0.04          # manual jog: poll the stage ~25 Hz (gentler on the serial port)
 UPPER_LIMIT_N = 32.0        # EM run press target - stop the press once force reaches this
 # travel safety: the Zaber stage's travel limits (mm). HOME_MM (17) is the
 # minimum / retracted end and the floor of travel; a press extrudes UPWARD from
@@ -269,7 +270,7 @@ class RunEngine:
         force = 0.0
         # continuous motion polls finely, so use the same speed-relative, metal-only
         # spike cutoff as the press (a flat threshold would false-trip on a sensor).
-        spike_limit = self._spike_limit(jog_speed * SAMPLE_DT)
+        spike_limit = self._spike_limit(jog_speed * JOG_POLL_DT)
         self._set(status="running", simulated=simulated, force=0.0, position=base_pos,
                   elapsed=0.0, samples=0, trace=[], message="")
 
@@ -297,23 +298,30 @@ class RunEngine:
 
         try:
             if axis is not None:
-                from zaber_motion import Units
+                # ONE smooth relative move - the device handles the target with its own
+                # encoder, so completion (is_busy) is correct even if the GUI's absolute
+                # reference is off, and it never gets stuck waiting for a position that
+                # never matches.
                 try:
-                    axis.move_velocity((1.0 if distance >= 0 else -1.0) * jog_speed,
-                                       Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                    axis.move_relative(distance, _mm_unit(), wait_until_idle=False)
                 except Exception as exc:
                     STATE.comms_lost = True
                     self._set(status="error", disconnect=True, position=STATE.position_mm,
                               message=f"Manual move failed: {exc}")
                     return {"ok": False, "position": STATE.position_mm, "disconnect": True,
                             "message": f"Manual move failed: {exc}"}
+                time.sleep(JOG_POLL_DT)   # let the move actually start before polling is_busy
                 while True:
                     if STATE.stop_requested:
                         self._stop_axis(axis)
                         self._set(status="stopped", position=STATE.position_mm, force=force, message="Manual move stopped.")
                         return {"ok": True, "position": STATE.position_mm, "force": force,
                                 "stopped": True, "simulated": simulated, "message": "Manual move stopped."}
-                    STATE._read_position()
+                    try:
+                        still_moving = axis.is_busy()
+                    except Exception:
+                        still_moving = True   # transient query failure - keep polling, don't disconnect
+                    STATE._read_position()    # stream the live position (3-strike comms_lost inside)
                     if STATE.comms_lost:
                         self._stop_axis(axis)
                         self._set(status="error", disconnect=True, position=STATE.position_mm,
@@ -323,10 +331,10 @@ class RunEngine:
                     tripped = record_and_check()
                     if tripped is not None:
                         return tripped
-                    if reached_target() or self._at_travel_limit():
+                    if not still_moving:      # the device finished the move
                         self._stop_axis(axis)
                         break
-                    time.sleep(SAMPLE_DT)
+                    time.sleep(JOG_POLL_DT)
             else:
                 # simulation: ramp the position smoothly at jog_speed, streaming force.
                 while True:

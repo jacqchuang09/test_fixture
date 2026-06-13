@@ -44,7 +44,8 @@ class HardwareState:
         self.cli = None          # live ZaberCLI when connected, else None (simulated)
         self.comport = None
         self.simulated = True
-        self.comms_lost = False  # set True when a live Zaber command fails (disconnect)
+        self.comms_lost = False  # set True after repeated live read failures (disconnect)
+        self._read_fail_count = 0  # consecutive position-read failures (3 = real loss)
         # set True by the run engine's safe state after a real comms loss, and only
         # cleared by a SUCCESSFUL reconnect. Lets the Start gate hard-block on a real
         # rig that lost its actuator (distinct from a dev machine with no hardware).
@@ -63,8 +64,15 @@ class HardwareState:
             return self.position_mm
         try:
             self.position_mm = float(axis.get_position(_mm_unit()))
+            self._read_fail_count = 0
         except Exception:
-            self.comms_lost = True
+            # one failed read is usually transient (the port was busy mid-move), not
+            # a real disconnect. Only flag comms_lost after several in a row, so a
+            # blip doesn't trigger the disconnect+reconnect cascade (which then hits
+            # the still-open port with SerialPortBusyException).
+            self._read_fail_count += 1
+            if self._read_fail_count >= 3:
+                self.comms_lost = True
         return self.position_mm
 
     def _set_default_speed(self, mm_s):
@@ -186,6 +194,11 @@ class HardwareState:
         axis = self.axis
         if axis is not None:
             try:
+                # if it is already at the baseline, do nothing (no needless move).
+                self._read_position()
+                if abs(self.position_mm - HOME_MM) < 0.05:
+                    return {"ok": True, "position": self.position_mm,
+                            "message": f"Already at baseline ({self.position_mm:.2f} mm)."}
                 axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
                 self._read_position()
                 return {"ok": True, "position": self.position_mm,
