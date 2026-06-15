@@ -46,6 +46,7 @@ class HardwareState:
         self.simulated = True
         self.comms_lost = False  # set True after repeated live read failures (disconnect)
         self._read_fail_count = 0  # consecutive position-read failures (3 = real loss)
+        self._move_loop_active = False  # True while a jog/run loop owns the serial port
         # set True by the run engine's safe state after a real comms loss, and only
         # cleared by a SUCCESSFUL reconnect. Lets the Start gate hard-block on a real
         # rig that lost its actuator (distinct from a dev machine with no hardware).
@@ -251,24 +252,30 @@ class HardwareState:
     def stop(self):
         self.stop_requested = True
         axis = self.axis
-        if axis is not None:
+        # During a jog/run the move loop owns the serial connection and stops the
+        # axis itself when it sees stop_requested. Calling axis.stop() here too would
+        # have TWO threads using the serial port at once, which corrupts it and looks
+        # like a disconnect. So only touch the port directly when no loop is running.
+        if axis is not None and not self._move_loop_active:
             try:
                 axis.stop()
                 return True, "Zaber stop sent."
             except Exception as exc:
                 return False, f"Zaber stop failed: {exc}"
-        return True, "[sim] Stop requested."
+        return True, "Stop requested."
 
     def pause(self, comport="COM3"):
         self.pause_requested = True
         axis = self.axis
-        if axis is not None:
+        # same as stop(): let the active move loop stop the axis to avoid a two-thread
+        # serial collision (which was showing up as a false disconnect after Pause).
+        if axis is not None and not self._move_loop_active:
             try:
                 axis.stop()
                 return True, "Zaber paused (axis stopped)."
             except Exception as exc:
                 return False, f"Zaber pause failed: {exc}"
-        return True, "[sim] Pause requested."
+        return True, "Pause requested."
 
     def disconnect(self):
         if self.cli is not None:

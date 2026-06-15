@@ -296,6 +296,7 @@ class RunEngine:
             return (distance >= 0 and STATE.position_mm >= target_pos) or \
                    (distance < 0 and STATE.position_mm <= target_pos)
 
+        STATE._move_loop_active = True   # this loop owns the serial port now
         try:
             if axis is not None:
                 # ONE smooth relative move - the device handles the target with its own
@@ -311,16 +312,27 @@ class RunEngine:
                     return {"ok": False, "position": STATE.position_mm, "disconnect": True,
                             "message": f"Manual move failed: {exc}"}
                 time.sleep(JOG_POLL_DT)   # let the move actually start before polling is_busy
+                # Hard safety net: the move should finish within its expected travel
+                # time. If is_busy stops responding or the device never reports idle,
+                # this deadline ends the loop so /api/move ALWAYS returns - the UI can
+                # never get stuck "actuator moving" with the controls locked.
+                deadline = time.time() + abs(distance) / max(0.1, jog_speed) * 2.0 + 5.0
+                busy_fail = 0
                 while True:
                     if STATE.stop_requested:
                         self._stop_axis(axis)
                         self._set(status="stopped", position=STATE.position_mm, force=force, message="Manual move stopped.")
                         return {"ok": True, "position": STATE.position_mm, "force": force,
                                 "stopped": True, "simulated": simulated, "message": "Manual move stopped."}
+                    if time.time() > deadline:
+                        self._stop_axis(axis)
+                        break
                     try:
                         still_moving = axis.is_busy()
+                        busy_fail = 0
                     except Exception:
-                        still_moving = True   # transient query failure - keep polling, don't disconnect
+                        busy_fail += 1
+                        still_moving = busy_fail < 3   # after 3 failed queries in a row, treat as done
                     STATE._read_position()    # stream the live position (3-strike comms_lost inside)
                     if STATE.comms_lost:
                         self._stop_axis(axis)
@@ -360,6 +372,8 @@ class RunEngine:
             self._stop_axis(axis)
             self._set(status="error", position=STATE.position_mm, message=f"Manual move failed: {exc}")
             return {"ok": False, "position": STATE.position_mm, "message": f"Manual move failed: {exc}"}
+        finally:
+            STATE._move_loop_active = False
 
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
@@ -408,6 +422,7 @@ class RunEngine:
 
         try:
             # --- gap-set move toward the sensor (force-monitored) ---
+            STATE._move_loop_active = True   # this loop owns the serial port now
             self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
@@ -521,9 +536,9 @@ class RunEngine:
             self._set(status="error", position=HOME_MM,
                       message=f"Run failed: {exc}")
         finally:
-            # keep the cached FUTEK open between operations (reopening it costs
-            # many seconds); it is only dropped on a read failure / disconnect.
-            pass
+            STATE._move_loop_active = False   # release the serial port
+            # the cached FUTEK stays open between operations (reopening it costs many
+            # seconds); it is only dropped on a read failure / disconnect.
 
     # -- the Fuji-film calibration press ------------------------------------
 
@@ -558,6 +573,7 @@ class RunEngine:
         idx = 0
         prev_force = None
         try:
+            STATE._move_loop_active = True   # this loop owns the serial port now
             self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
@@ -620,9 +636,9 @@ class RunEngine:
         except Exception as exc:
             self._set(status="error", message=f"Fuji Film Test failed: {exc}")
         finally:
-            # keep the cached FUTEK open between operations (reopening it costs
-            # many seconds); it is only dropped on a read failure / disconnect.
-            pass
+            STATE._move_loop_active = False   # release the serial port
+            # the cached FUTEK stays open between operations (reopening it costs many
+            # seconds); it is only dropped on a read failure / disconnect.
 
     # -- the fatigue (cyclical) loop ----------------------------------------
 
@@ -721,6 +737,7 @@ class RunEngine:
 
         try:
             # approach the sensor (same force-monitored gap move as the EM press).
+            STATE._move_loop_active = True   # this loop owns the serial port now
             self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
@@ -837,9 +854,9 @@ class RunEngine:
         except Exception as exc:
             self._set(status="error", message=f"Fatigue test failed: {exc}")
         finally:
-            # keep the cached FUTEK open between operations (reopening it costs
-            # many seconds); it is only dropped on a read failure / disconnect.
-            pass
+            STATE._move_loop_active = False   # release the serial port
+            # the cached FUTEK stays open between operations (reopening it costs many
+            # seconds); it is only dropped on a read failure / disconnect.
 
     def _write_cyclical(self, test_folder, readings):
         # save the full per-sample fatigue stream (Index, Load Cell, Time, Cycle).

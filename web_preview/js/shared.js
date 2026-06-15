@@ -258,6 +258,18 @@
         }
       }
 
+      // Run a /api/move call but never let the UI hang: if it doesn't return within
+      // `ms`, resolve a timeout result so the caller's finally unlocks the controls.
+      function moveApiWithTimeout(payload, successMessage, ms = 30000) {
+        return Promise.race([
+          callApi("/api/move", payload, successMessage),
+          new Promise((resolve) => setTimeout(() => resolve({
+            ok: false, timeout: true,
+            message: "Move timed out - controls unlocked. Check the actuator and try again.",
+          }), ms)),
+        ]);
+      }
+
       function closeAnalysisToMain(kind) {
         const analysisModal = { em: emAnalysisModal, manual: manualAnalysisModal, shear: shearAnalysisModal, fatigue: fatigueAnalysisModal }[kind];
         const testModal = { em: emTestModal, manual: manualTestModal, shear: shearTestModal, fatigue: cyclicalTestModal }[kind];

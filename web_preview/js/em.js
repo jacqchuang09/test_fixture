@@ -189,7 +189,7 @@
         emRunStartedAt = performance.now();
         // the actuator + load cell take a moment to initialize; show a clear wait
         // state (controls already locked above) until the run actually starts.
-        setEmState("WAITING TO START", "initializing actuator and load cell - please wait…");
+        setStatePill("emState", "WAITING TO START", "initializing actuator and load cell - please wait…");
 
         const result = await callApi("/api/start-run", { run_number: emCurrentRun, redo_of: redoOf, reason: redoReason });
         if (!result || !result.ok) {
@@ -220,13 +220,13 @@
         if (!status || !status.ok) return;
         if (status.status === "waiting") {
           // command accepted but the actuator hasn't started moving yet (load-cell init).
-          setEmState("WAITING TO START", "initializing actuator and load cell - please wait…");
+          setStatePill("emState", "WAITING TO START", "initializing actuator and load cell - please wait…");
           return;
         }
         const elapsed = Number(status.elapsed || 0);
         const force = Number(status.force || 0);
         if (status.status === "running") {
-          setEmState("RUNNING", `run ${emCurrentRun} running.`);
+          setStatePill("emState", "RUNNING", `run ${emCurrentRun} running.`);
         }
         if (status.status === "running" || status.status === "completed") {
           // rebuild this run's readings from the backend's dense 100 Hz trace so

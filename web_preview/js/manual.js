@@ -174,7 +174,7 @@
           setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
         }, 100);
 
-        const result = await callApi("/api/move", { distance, speed: manualActuatorSpeed() });
+        const result = await moveApiWithTimeout({ distance, speed: manualActuatorSpeed() }, null);
 
         if (manualMotionTimer) { clearInterval(manualMotionTimer); manualMotionTimer = null; }
         if (result && typeof result.position === "number") {
@@ -369,7 +369,7 @@
           }
         }, 100);
         try {
-          const result = await callApi("/api/move", { distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
+          const result = await moveApiWithTimeout({ distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
           // update the readout once the stage has finished moving.
           if (result && result.stopped_for_safety) {
             if (typeof result.position === "number") setPositionReadout(result.position);
