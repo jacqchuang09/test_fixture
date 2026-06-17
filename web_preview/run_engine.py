@@ -16,6 +16,7 @@ from hardware import STATE, _mm_unit
 # -- press parameters ---------------------------------------------------------
 HOME_MM = 17.0              # retracted / home position
 GAP_MM = 10.95              # initial travel toward the sensor before the press
+FUJI_EXTRUSION_MAX_MM = 15.0  # ceiling for the operator-set Fuji extrusion distance (safety clamp)
 SAMPLE_DT = 0.010           # 100 Hz sampling - record force every 10 ms
 JOG_POLL_DT = 0.04          # manual jog: poll the stage ~25 Hz (gentler on the serial port)
 UPPER_LIMIT_N = 32.0        # EM run press target - stop the press once force reaches this
@@ -222,15 +223,18 @@ class RunEngine:
         return (pos <= ZABER_TRAVEL_MIN_MM + TRAVEL_MARGIN_MM or
                 pos >= ZABER_TRAVEL_MAX_MM - TRAVEL_MARGIN_MM)
 
-    def _approach_move(self, axis):
+    def _approach_move(self, axis, distance_mm=None):
         # single move toward the sensor, up to the gap-set start position. Contact
         # and pressing happen afterward in the main loop, where the force-spike,
         # ceiling, and travel checks run. Sets the position directly in simulation.
+        # distance_mm defaults to GAP_MM; the Fuji film press passes the operator's
+        # extrusion distance instead.
+        distance = GAP_MM if distance_mm is None else float(distance_mm)
         if axis is None:
-            STATE.position_mm = HOME_MM + GAP_MM
+            STATE.position_mm = HOME_MM + distance
             return
         try:
-            axis.move_relative(GAP_MM, _mm_unit(), wait_until_idle=True)
+            axis.move_relative(distance, _mm_unit(), wait_until_idle=True)
             STATE._read_position()
         except Exception:
             STATE.comms_lost = True
@@ -542,23 +546,29 @@ class RunEngine:
 
     # -- the Fuji-film calibration press ------------------------------------
 
-    def start_fuji_film(self, surface_area_mm2=325.0):
+    def start_fuji_film(self, surface_area_mm2=325.0, extrusion_mm=None):
         if self.is_running():
             return False, "A test is already in progress."
         STATE.stop_requested = False
         STATE.pause_requested = False
         STATE.comms_lost = False
+        # the operator sets the extrusion distance in the calibration window; clamp it
+        # to the safety ceiling, and fall back to the default gap if none was sent.
+        if extrusion_mm is None:
+            extrusion = GAP_MM
+        else:
+            extrusion = max(0.0, min(float(extrusion_mm), FUJI_EXTRUSION_MAX_MM))
         # "waiting" until the run thread is past the load-cell init and about to move
         # (the thread flips it to "running"); the UI shows a wait pill meanwhile.
         self._set(status="waiting", force=0.0, samples=0,
                   message="initializing actuator and load cell - please wait",
                   position=HOME_MM, disconnect=False, safety_stop=False)
         self._thread = threading.Thread(
-            target=self._run_fuji_film, args=(float(surface_area_mm2),), daemon=True)
+            target=self._run_fuji_film, args=(float(surface_area_mm2), extrusion), daemon=True)
         self._thread.start()
         return True, "Fuji Film Test started."
 
-    def _run_fuji_film(self, surface_area_mm2):
+    def _run_fuji_film(self, surface_area_mm2, extrusion_mm=None):
         # press down until the load cell reaches the calibration target (20 N),
         # streaming live force; spike/over-force and a max-travel timeout keep it
         # safe. No data is saved - this is a calibration press.
@@ -575,7 +585,7 @@ class RunEngine:
         try:
             STATE._move_loop_active = True   # this loop owns the serial port now
             self._home(axis)             # start every press from the 17 mm baseline
-            self._approach_move(axis)
+            self._approach_move(axis, extrusion_mm)   # extrude the operator-set distance
             start_pos = STATE.position_mm
             depth = 0.0
             if axis is not None:

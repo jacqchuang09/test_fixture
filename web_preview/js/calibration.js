@@ -37,6 +37,7 @@
           "calibrationMoveDownButton",
           "calibrationHomeButton",
           "incrementDistance",
+          "extrusionDistance",
           "fujiFilmButton",
           "calibrationCloseButton",
         ].forEach((id) => {
@@ -47,7 +48,56 @@
         // pause) so the operator can stop a jog or the Fuji press at any time.
         const pauseBtn = document.getElementById("calibrationPauseButton");
         if (pauseBtn) pauseBtn.disabled = !isLocked;
+        // when unlocking, the Fuji button only re-enables if a valid extrusion
+        // distance is still set (it gates the test - see updateFujiButtonState).
+        if (!isLocked) updateFujiButtonState();
         if (state) setStatePill("calibrationState", state, message || "", variant);
+      }
+
+      // a valid extrusion distance is between 0.5 and 15 mm. Returns the number or
+      // null. The 15 mm ceiling matches the backend's FUJI_EXTRUSION_MAX_MM clamp.
+      function validExtrusion(value) {
+        const n = Number(value);
+        return (value !== "" && value != null && Number.isFinite(n) && n >= 0.5 && n <= 15) ? n : null;
+      }
+
+      // the last distance actually used to START a Fuji Film test (remembered across
+      // sessions), shown grayed out as the field's placeholder so the operator can
+      // reuse it. Returns the number or null if none has been used yet.
+      function lastUsedExtrusionDistance() {
+        try {
+          return validExtrusion(localStorage.getItem("zaberLastExtrusionDistance"));
+        } catch (error) {
+          return null;
+        }
+      }
+
+      // the distance the test will use: whatever is typed if valid, otherwise the
+      // last-used value shown as the gray placeholder. Null means nothing valid yet.
+      function effectiveExtrusionDistance() {
+        const input = document.getElementById("extrusionDistance");
+        if (input && input.value !== "") return validExtrusion(input.value);
+        return lastUsedExtrusionDistance();
+      }
+
+      // show the last-used distance as the grayed-out placeholder (or a prompt if none).
+      function refreshExtrusionPlaceholder() {
+        const input = document.getElementById("extrusionDistance");
+        if (!input) return;
+        const last = lastUsedExtrusionDistance();
+        input.placeholder = last != null ? String(last) : "set a distance to enable the test";
+      }
+
+      // The Fuji Film Start button is enabled only when there is a distance to use -
+      // either typed in the field or remembered from the last test (the gray
+      // placeholder). Called on every keystroke and whenever the controls unlock.
+      // While a press or jog is running (Pause enabled), it stays disabled regardless.
+      function updateFujiButtonState() {
+        const button = document.getElementById("fujiFilmButton");
+        if (!button) return;
+        const pauseBtn = document.getElementById("calibrationPauseButton");
+        const busy = pauseBtn && !pauseBtn.disabled;
+        button.disabled = busy || effectiveExtrusionDistance() == null;
       }
 
       // Pause a running jog or Fuji press. Unlike the EM pause, this does NOT home
@@ -75,6 +125,10 @@
         } catch (error) {
           // keep the built-in default when storage is unavailable.
         }
+        // the extrusion field is left blank; the last-used distance shows grayed out
+        // as its placeholder (and is used as the default if Start is pressed blank).
+        refreshExtrusionPlaceholder();
+        updateFujiButtonState();
       }
 
       // up subtracts distance, down adds distance.
@@ -99,6 +153,22 @@
       async function beginFujiFilmTest() {
         const button = document.getElementById("fujiFilmButton");
         if (fujiTimer || calibrationMoveInFlight) return;
+        // the test needs an extrusion distance - how far the actuator drives toward
+        // the sensor before pressing to 20 N and retracting. Use whatever is typed,
+        // or fall back to the last-used value shown as the gray placeholder.
+        const extrusion = effectiveExtrusionDistance();
+        if (extrusion == null) {
+          addCalibrationUpdate("ERROR: set an extrusion distance between 0.5 mm and 15 mm before starting the Fuji Film Test.");
+          document.getElementById("extrusionDistance")?.focus();
+          return;
+        }
+        // remember it as the last-used distance, shown grayed out next time.
+        try {
+          localStorage.setItem("zaberLastExtrusionDistance", String(extrusion));
+        } catch (error) {
+          // storage only remembers the last-used distance locally.
+        }
+        refreshExtrusionPlaceholder();
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
         // live Zaber on a real rig (soft in simulation).
         if (!(await zaberStartGateOk())) return;
@@ -117,7 +187,7 @@
         };
 
         const surfaceArea = `${document.getElementById("surfaceArea")?.value || 325}mm2`;
-        const result = await callApi("/api/fuji-film", { surface_area: surfaceArea });
+        const result = await callApi("/api/fuji-film", { surface_area: surfaceArea, extrusion_distance: extrusion });
         if (!result || !result.ok) {
           finish(`ERROR: ${(result && result.message) || "could not start Fuji Film Test."}`);
           return;

@@ -1239,33 +1239,86 @@
         copyReportValues("emReportOutputText", "copyEmReportButton");
       }
 
+      // linear interpolation of a cap-vs-pressure curve at a target pressure. xs is the
+      // aligned pressure axis (kPa, ascending) and ys the matching cap values from the
+      // Python pipeline; clamps to the curve's ends when the target is out of range.
+      function emInterpAt(xs, ys, target) {
+        const pairs = [];
+        for (let i = 0; i < xs.length; i++) {
+          if (Number.isFinite(xs[i]) && Number.isFinite(ys[i])) pairs.push([xs[i], ys[i]]);
+        }
+        if (!pairs.length) return 0;
+        pairs.sort((a, b) => a[0] - b[0]);
+        if (target <= pairs[0][0]) return pairs[0][1];
+        if (target >= pairs[pairs.length - 1][0]) return pairs[pairs.length - 1][1];
+        for (let i = 1; i < pairs.length; i++) {
+          if (pairs[i][0] >= target) {
+            const [x0, y0] = pairs[i - 1];
+            const [x1, y1] = pairs[i];
+            const span = x1 - x0;
+            const fraction = span ? (target - x0) / span : 0;
+            return y0 + fraction * (y1 - y0);
+          }
+        }
+        return pairs[pairs.length - 1][1];
+      }
+
       function emTrackerOutput(readings) {
-        const runs = [...new Set(readings.map((point) => point.run))].sort((a, b) => a - b);
         const channels = Array.from({ length: 8 }, (_, index) => index + 1);
         const surfaceArea = Math.max(1, Number.parseFloat(document.getElementById("surfaceArea").value || "325"));
+        const targetPressures = [5, 10, 15, 20, 25, 30, 35, 40, 45];
+        // When the Python pipeline ran, use its aligned cap-vs-pressure curves and
+        // inflection values (the same data the graphs draw) so the report matches the
+        // plots exactly. The pipeline interpolates CAP and FUT to a common 200 Hz grid
+        // and syncs them on the release peak, which the preview's nearest-timestamp
+        // approximation can't do. Fall back to the preview readings when it didn't run.
+        const usePipeline = emPlotData && Array.isArray(emPlotData.runs) && emPlotData.runs.length;
+        const pipelineRuns = usePipeline ? emPlotData.runs : [];
+        const runs = usePipeline
+          ? pipelineRuns.map((runData) => runData.run)
+          : [...new Set(readings.map((point) => point.run))].sort((a, b) => a - b);
         const channelMetrics = channels.map((channel) => {
           const psAtInflection = [];
           const kpaAtInflection = [];
           const maxCap = [];
-          const capAtPressures = [5, 10, 15, 20, 25, 30, 35, 40, 45].map(() => []);
+          const capAtPressures = targetPressures.map(() => []);
 
-          runs.forEach((run) => {
-            const runReadings = readings.filter((point) => point.run === run);
-            const kPaValues = runReadings.map((point) => (point.force / surfaceArea) * 1000);
-            const capValues = runReadings.map((point) => emChannelValue(point, channel));
-            const psValues = capValues.map((cap, index) => cap / Math.max(0.1, kPaValues[index] + 1));
-            const derivativeValues = psValues.slice(1).map((value, index) => Math.abs(value - psValues[index]));
-            const peakIndex = Math.max(0, derivativeValues.indexOf(Math.max(...derivativeValues)));
-            psAtInflection.push(psValues[peakIndex] || 0);
-            kpaAtInflection.push(kPaValues[peakIndex] || 0);
-            maxCap.push(Math.max(...capValues, 0));
-            [5, 10, 15, 20, 25, 30, 35, 40, 45].forEach((pressure, pressureIndex) => {
-              const nearestIndex = kPaValues.reduce((bestIndex, value, index) => {
-                return Math.abs(value - pressure) < Math.abs(kPaValues[bestIndex] - pressure) ? index : bestIndex;
-              }, 0);
-              capAtPressures[pressureIndex].push(capValues[nearestIndex] || 0);
+          if (usePipeline) {
+            // aligned path: read each run's pressure axis and this channel's cap curve
+            // straight from the pipeline payload (emPlotData), and use the pipeline's
+            // own inflection (P.S, pressure) instead of re-deriving it in the browser.
+            pipelineRuns.forEach((runData) => {
+              const channelData = (runData.channels || [])[channel - 1];
+              if (!channelData) return;
+              const pressure = runData.pressure || [];
+              const capValues = (channelData.cap || []).filter((value) => Number.isFinite(value));
+              const infl = channelData.infl;
+              psAtInflection.push(infl ? infl.ps : 0);
+              kpaAtInflection.push(infl ? infl.kpa : 0);
+              maxCap.push(capValues.length ? Math.max(...capValues, 0) : 0);
+              targetPressures.forEach((pressureValue, pressureIndex) => {
+                capAtPressures[pressureIndex].push(emInterpAt(pressure, channelData.cap || [], pressureValue));
+              });
             });
-          });
+          } else {
+            runs.forEach((run) => {
+              const runReadings = readings.filter((point) => point.run === run);
+              const kPaValues = runReadings.map((point) => (point.force / surfaceArea) * 1000);
+              const capValues = runReadings.map((point) => emChannelValue(point, channel));
+              const psValues = capValues.map((cap, index) => cap / Math.max(0.1, kPaValues[index] + 1));
+              const derivativeValues = psValues.slice(1).map((value, index) => Math.abs(value - psValues[index]));
+              const peakIndex = Math.max(0, derivativeValues.indexOf(Math.max(...derivativeValues)));
+              psAtInflection.push(psValues[peakIndex] || 0);
+              kpaAtInflection.push(kPaValues[peakIndex] || 0);
+              maxCap.push(Math.max(...capValues, 0));
+              targetPressures.forEach((pressure, pressureIndex) => {
+                const nearestIndex = kPaValues.reduce((bestIndex, value, index) => {
+                  return Math.abs(value - pressure) < Math.abs(kPaValues[bestIndex] - pressure) ? index : bestIndex;
+                }, 0);
+                capAtPressures[pressureIndex].push(capValues[nearestIndex] || 0);
+              });
+            });
+          }
 
           return {
             ps: summaryStats(psAtInflection),

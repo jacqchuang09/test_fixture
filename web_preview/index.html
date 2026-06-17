@@ -262,7 +262,6 @@
       <div class="modal-body">
         <div class="mini-panel em-panel">
           <div id="emState" class="state-pill"><span class="state-tag">IDLE</span></div>
-          <div class="alert" style="text-align: left;">EM Testing will automatically pause between runs.</div>
           <div class="em-live-grid">
             <div class="em-live-panel">
               <h2>Current EM Test Status</h2>
@@ -340,18 +339,27 @@
               </label>
               <label id="manualPrimaryControlField">
                 <span class="sensor-header">
-                  <span id="manualPrimaryControlLabel" class="label-text">Increment Distance (mm)</span>
+                  <span id="manualPrimaryControlLabel" class="label-text">Increment Distance</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.">i</span>
                 </span>
-                <input id="manualIncrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
-                <input id="manualTargetForce" class="hidden" type="number" min="0" max="32" step="0.1" value="1.5" />
+                <span id="manualIncrementField" class="suffix-field">
+                  <input id="manualIncrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
+                  <span class="suffix">mm</span>
+                </span>
+                <span id="manualTargetForceField" class="suffix-field hidden">
+                  <input id="manualTargetForce" type="number" min="0" max="32" step="0.1" value="1.5" />
+                  <span class="suffix">N</span>
+                </span>
               </label>
               <label id="manualSpeedField">
                 <span class="sensor-header">
-                  <span class="label-text">Actuator Speed (mm/s)</span>
+                  <span class="label-text">Actuator Speed</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Assumed actuator travel speed used to estimate elapsed time on the manual preview graphs. Default is 2.0 mm/s.">i</span>
                 </span>
-                <input id="manualActuatorSpeed" type="number" min="0.01" max="2" step="0.001" value="1.0" />
+                <span class="suffix-field">
+                  <input id="manualActuatorSpeed" type="number" min="0.01" max="2" step="0.001" value="1.0" />
+                  <span class="suffix">mm/s</span>
+                </span>
               </label>
             </div>
 
@@ -397,7 +405,10 @@
                 <span class="label-text">Last Seconds to Display</span>
                 <span class="sensor-help" tabindex="0" data-tooltip="When Cumulative Time is off, time-based graphs show only the last selected number of seconds.">i</span>
               </span>
-              <input id="manualSecondsToDisplay" type="number" min="1" step="1" value="30" />
+              <span class="suffix-field">
+                <input id="manualSecondsToDisplay" type="number" min="1" step="1" value="30" />
+                <span class="suffix">s</span>
+              </span>
             </label>
             <label>
               <span class="sensor-header">
@@ -504,26 +515,35 @@
 
               <label>
                 <span class="sensor-header">
-                  <span class="label-text">Lower Force Bound (N)</span>
+                  <span class="label-text">Lower Force Bound</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Lowest force target in each fatigue cycle. Example: cycle between 1 N and 20 N.">i</span>
                 </span>
-                <input id="cyclicalLowerForce" type="number" min="0" max="32" step="0.1" value="1" />
+                <span class="suffix-field">
+                  <input id="cyclicalLowerForce" type="number" min="0" max="32" step="0.1" value="1" />
+                  <span class="suffix">N</span>
+                </span>
               </label>
 
               <label>
                 <span class="sensor-header">
-                  <span class="label-text">Upper Force Bound (N)</span>
+                  <span class="label-text">Upper Force Bound</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Highest force target in each fatigue cycle. The actuator compresses the sensor repeatedly up to this force.">i</span>
                 </span>
-                <input id="cyclicalUpperForce" type="number" min="0" max="32" step="0.1" value="20" />
+                <span class="suffix-field">
+                  <input id="cyclicalUpperForce" type="number" min="0" max="32" step="0.1" value="20" />
+                  <span class="suffix">N</span>
+                </span>
               </label>
 
               <label>
                 <span class="sensor-header">
-                  <span class="label-text">Frequency (Hz)</span>
+                  <span class="label-text">Frequency</span>
                   <span class="sensor-help" tabindex="0" data-tooltip="Number of fatigue cycles per second.">i</span>
                 </span>
-                <input id="waveformFrequency" type="number" min="0.01" max="5" step="0.01" value="1" />
+                <span class="suffix-field">
+                  <input id="waveformFrequency" type="number" min="0.01" max="5" step="0.01" value="1" />
+                  <span class="suffix">Hz</span>
+                </span>
               </label>
 
               <label>
@@ -569,21 +589,30 @@
               <span class="label-text">Last Seconds to Display</span>
               <span class="sensor-help" tabindex="0" data-tooltip="When Cumulative Time is off, the shear graph shows only the last selected number of seconds.">i</span>
             </span>
-            <input id="secondsToDisplay" type="number" min="1" step="1" value="30" />
+            <span class="suffix-field">
+              <input id="secondsToDisplay" type="number" min="1" step="1" value="30" />
+              <span class="suffix">s</span>
+            </span>
           </label>
           <label>
             <span class="sensor-header">
               <span class="label-text">Y-Axis Min</span>
               <span class="sensor-help" tabindex="0" data-tooltip="Lowest force value shown on the shear graph y-axis.">i</span>
             </span>
-            <input id="yAxisMin" type="number" step="1" value="0" />
+            <span class="suffix-field">
+              <input id="yAxisMin" type="number" step="1" value="0" />
+              <span class="suffix">N</span>
+            </span>
           </label>
           <label>
             <span class="sensor-header">
               <span class="label-text">Y-Axis Limit</span>
               <span class="sensor-help" tabindex="0" data-tooltip="Highest force value shown on the shear graph y-axis.">i</span>
             </span>
-            <input id="yAxisLimit" type="number" min="1" step="1" value="5" />
+            <span class="suffix-field">
+              <input id="yAxisLimit" type="number" min="1" step="1" value="5" />
+              <span class="suffix">N</span>
+            </span>
           </label>
           <label class="check">
             <input id="showMarkers" type="checkbox" checked />
@@ -662,7 +691,6 @@
       </div>
       <div class="modal-body">
         <div id="calibrationState" class="state-pill" style="margin-bottom: 12px;"><span class="state-tag">READY:</span><span class="state-message">calibration window ready.</span></div>
-        <div class="alert">Error Check Active: Movement will stop if significant force increase is detected</div>
         <div class="calibration-columns">
           <div class="calibration-card">
             <h3>Calibration Current Status</h3>
@@ -672,18 +700,30 @@
           <div class="calibration-card">
             <h3>Manual Increment Control</h3>
             <label>
-              <span class="label-text">Increment Distance (mm)</span>
-              <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
+              <span class="label-text">Increment Distance</span>
+              <span class="suffix-field">
+                <input id="incrementDistance" type="number" min="0.01" max="15" step="0.01" value="0.1" />
+                <span class="suffix">mm</span>
+              </span>
             </label>
             <div class="calibration-actions" style="margin-top: 14px;">
               <button id="calibrationMoveUpButton" onclick="calibrationMove('up')">↑ Move Up</button>
               <button id="calibrationMoveDownButton" onclick="calibrationMove('down')">↓ Move Down</button>
               <button id="calibrationHomeButton" class="restart" onclick="homeAxis()">↻ Home</button>
             </div>
-            <button id="fujiFilmButton" class="success fuji-button" style="margin-top: 16px; width: 100%;" onclick="beginFujiFilmTest()">
-              ▶ Start Fuji Film Test
-            </button>
-            <button id="calibrationPauseButton" class="pause-button" style="margin-top: 10px; width: 100%; min-height: 46px;" onclick="pauseCalibration()" disabled>Ⅱ Pause</button>
+            <label style="margin-top: 16px;">
+              <span class="label-text">Extrusion Distance - for Fuji Film</span>
+              <span class="suffix-field">
+                <input id="extrusionDistance" type="number" min="0.5" max="15" step="0.01" placeholder="set a distance to enable the test" oninput="updateFujiButtonState()" />
+                <span class="suffix">mm</span>
+              </span>
+            </label>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px;">
+              <button id="fujiFilmButton" class="success fuji-button" style="min-width: 0;" onclick="beginFujiFilmTest()" disabled>
+                ▶ Start Fuji
+              </button>
+              <button id="calibrationPauseButton" class="pause-button" style="min-width: 0;" onclick="pauseCalibration()" disabled>Ⅱ Pause</button>
+            </div>
           </div>
         </div>
       </div>

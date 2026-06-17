@@ -296,7 +296,8 @@ class Handler(SimpleHTTPRequestHandler):
             # streaming live force. The UI polls /api/run-status.
             from run_engine import ENGINE
             surface_area = self._float_from_text(payload.get("surface_area"), default=325.0)
-            ok, message = ENGINE.start_fuji_film(surface_area)
+            extrusion = self._float_from_text(payload.get("extrusion_distance"), default=None)
+            ok, message = ENGINE.start_fuji_film(surface_area, extrusion)
             return {"ok": ok, "message": message}
 
         return False, f"Unknown API route: {path}"

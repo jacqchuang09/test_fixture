@@ -112,9 +112,9 @@
       function updateManualControlMode() {
         const isForceMode = manualControlMode() === "force";
         const locked = isManualMoving();
-        document.getElementById("manualPrimaryControlLabel").textContent = isForceMode ? "Target Force (N)" : "Increment Distance (mm)";
-        document.getElementById("manualIncrementDistance").classList.toggle("hidden", isForceMode);
-        document.getElementById("manualTargetForce").classList.toggle("hidden", !isForceMode);
+        document.getElementById("manualPrimaryControlLabel").textContent = isForceMode ? "Target Force" : "Increment Distance";
+        document.getElementById("manualIncrementField").classList.toggle("hidden", isForceMode);
+        document.getElementById("manualTargetForceField").classList.toggle("hidden", !isForceMode);
         document.getElementById("manualControlStack").classList.toggle("force-mode", isForceMode);
         document.getElementById("manualDistanceModeButton").classList.toggle("active", !isForceMode);
         document.getElementById("manualForceModeButton").classList.toggle("active", isForceMode);
