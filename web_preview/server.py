@@ -300,6 +300,13 @@ class Handler(SimpleHTTPRequestHandler):
             ok, message = ENGINE.start_fuji_film(surface_area, extrusion)
             return {"ok": ok, "message": message}
 
+        if path == "/api/shear-start":
+            # live shear-force capture: read the load cell continuously (no actuator
+            # motion - the operator applies shear by hand). The UI polls /api/run-status.
+            from run_engine import ENGINE
+            ok, message = ENGINE.start_shear()
+            return {"ok": ok, "message": message}
+
         return False, f"Unknown API route: {path}"
 
     def _ensure_folder(self, folder):

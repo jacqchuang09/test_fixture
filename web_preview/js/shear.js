@@ -7,7 +7,7 @@
  * Structure:
  *   - Settings / time controls: shearSettings, updateShearTimeControls.
  *   - Capture: resetShearGraph, startShearGraph, pauseShearGraph,
- *     addShearPoint, drawShearGraph, previewShearForceOverTime.
+ *     finishShear, drawShearGraph (reads the real load cell via the backend).
  *   - Analysis: performShearAnalysis, shearChannelPlotSvg,
  *     shearDetectionTable, populateShearAnalysis, setShearState.
  *
@@ -19,13 +19,6 @@
       function setShearState(state, message) {
         setStatePill(shearStateEl, state, message);
         document.getElementById("shearMessage").textContent = "";
-      }
-
-      // preview force curve for shear. it rises gently toward the normal shear-test range.
-      function previewShearForceOverTime(elapsedSeconds) {
-        const rise = 1.5 * (1 - Math.exp(-elapsedSeconds / 2.2));
-        const ripple = Math.sin(elapsedSeconds * 2.1) * 0.04;
-        return Math.min(1.55, Math.max(0, rise + ripple));
       }
 
       function shearSettings() {
@@ -59,28 +52,74 @@
         setShearState("READY", "click Start to begin live shear graph.");
       }
 
-      function startShearGraph() {
+      // Live shear capture reads the REAL FUTEK load cell on the backend (no actuator
+      // motion - the operator applies shear by hand). It starts a backend read loop and
+      // polls /api/run-status for the live force, rebuilding the graph from the dense
+      // 100 Hz trace the backend streams - just like the fatigue test.
+      async function startShearGraph() {
         shearData = [];
         latestShearAnalysisData = [];
         shearStartTime = performance.now();
         clearInterval(shearTimer);
         clearTimeout(shearAnalysisUnlockTimer);
-        shearTimer = setInterval(addShearPoint, 10);
         document.getElementById("shearStartButton").disabled = true;
         document.getElementById("shearPauseButton").disabled = false;
         document.getElementById("shearAnalysisButton").disabled = true;
         document.getElementById("shearTestCloseButton").disabled = true;
-        setShearState("RUNNING", "live shear graph updating.");
+        setShearState("WAITING TO START", "initializing load cell - please wait…");
         drawShearGraph();
+        console.log("[shear] START - requesting live load-cell read from backend");
+        const result = await callApi("/api/shear-start", {});
+        console.log("[shear] /api/shear-start ->", result);
+        if (!result || !result.ok) {
+          setShearState("ERROR", (result && result.message) || "could not start the shear test.");
+          document.getElementById("shearStartButton").disabled = false;
+          document.getElementById("shearPauseButton").disabled = true;
+          document.getElementById("shearTestCloseButton").disabled = false;
+          return;
+        }
+        let lastStatus = "";
+        shearTimer = setInterval(async () => {
+          const status = await callApi("/api/run-status");
+          if (!status || !status.ok) return;
+          if (status.status !== lastStatus) {
+            console.log(`[shear] status -> ${status.status}  force=${Number(status.force || 0).toFixed(3)} N  simulated=${status.simulated}`);
+            lastStatus = status.status;
+          }
+          if (status.status === "waiting") {
+            setShearState("WAITING TO START", "initializing load cell - please wait…");
+            return;
+          }
+          if (Array.isArray(status.trace) && status.trace.length) {
+            shearData = status.trace.map((point) => ({ time: point[0], force: point[1] }));
+            latestShearAnalysisData = shearData.slice();
+            drawShearGraph();
+          }
+          if (status.status === "running") {
+            setShearState("RUNNING", `live shear force: ${Number(status.force || 0).toFixed(3)} N.`);
+          } else if (status.status === "stopped" || status.status === "error") {
+            clearInterval(shearTimer);
+            shearTimer = null;
+            finishShear(status);
+          }
+        }, 100);
       }
 
-      function pauseShearGraph() {
-        clearInterval(shearTimer);
+      async function pauseShearGraph() {
+        // ask the backend to stop reading; the poll sees "stopped" (with the full
+        // series) on the next tick and calls finishShear.
+        console.log("[shear] STOP clicked");
+        document.getElementById("shearPauseButton").disabled = true;
+        await callApi("/api/stop", {});
+      }
+
+      function finishShear(status) {
         clearTimeout(shearAnalysisUnlockTimer);
-        shearTimer = null;
         shearAnalysisUnlockTimer = null;
-        if (shearData.length) {
-          latestShearAnalysisData = shearData.slice();
+        // the backend sends the FULL captured series on stop, so analysis has every
+        // reading (not just the rolling live window).
+        if (Array.isArray(status.trace) && status.trace.length) {
+          latestShearAnalysisData = status.trace.map((point) => ({ time: point[0], force: point[1] }));
         }
         shearData = [];
         shearStartTime = null;
@@ -90,16 +129,12 @@
         document.getElementById("shearTestCloseButton").disabled = false;
         updateShearTimeControls();
         drawShearGraph();
-        setShearState("STOPPED", "graph stopped and reset to 0 seconds. click Start to begin again.");
-      }
-
-      function addShearPoint() {
-        const elapsed = (performance.now() - shearStartTime) / 1000;
-        const force = previewShearForceOverTime(elapsed);
-        shearData.push({ time: elapsed, force });
-        latestShearAnalysisData = shearData.slice();
-        document.getElementById("shearAnalysisButton").disabled = true;
-        drawShearGraph();
+        if (status.status === "error") {
+          setShearState("ERROR", status.message || "shear test error.");
+        } else {
+          setShearState("STOPPED", `shear test stopped. ${latestShearAnalysisData.length} samples captured. click Start to begin again.`);
+        }
+        console.log(`[shear] DONE - ${latestShearAnalysisData.length} samples captured`);
       }
 
       function drawShearGraph() {

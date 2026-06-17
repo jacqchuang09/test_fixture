@@ -153,9 +153,18 @@
         document.getElementById("manualConfirmDragButton").disabled = true;
         setManualState("WAITING TO START", "initializing load cell - please wait…");
         const t0 = performance.now();
+        let moveDone = false;    // stop a late status poll from re-showing MOVING after the move ends
+        let lastStatus = "";
+        console.log(`[manual move] START "${description}"  distance=${distance.toFixed(3)} mm  (force mode drives until the load cell reads the target)`);
         manualMotionTimer = setInterval(async () => {
+          if (moveDone) return;
           const status = await callApi("/api/run-status");
+          if (moveDone) return;
           if (!status || !status.ok) return;
+          if (status.status !== lastStatus) {
+            console.log(`[manual move] status -> ${status.status}  force=${Number(status.force || 0).toFixed(2)} N  pos=${Number(status.position || 0).toFixed(2)} mm  simulated=${status.simulated}`);
+            lastStatus = status.status;
+          }
           if (status.status === "waiting") {
             setManualState("WAITING TO START", "initializing load cell - please wait…");
             return;
@@ -175,6 +184,8 @@
         }, 100);
 
         const result = await moveApiWithTimeout({ distance, speed: manualActuatorSpeed() }, null);
+        moveDone = true;
+        console.log(`[manual move] /api/move returned after ${Math.round(performance.now() - t0)} ms`, result);
 
         if (manualMotionTimer) { clearInterval(manualMotionTimer); manualMotionTimer = null; }
         if (result && typeof result.position === "number") {

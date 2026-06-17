@@ -99,18 +99,51 @@ class ZaberDisconnect(Exception):
 _FUTEK_CACHE = None
 
 
+def _futek_kind(dev):
+    # human label for what kind of load cell we ended up with.
+    if dev is None:
+        return "NONE (simulated force)"
+    try:
+        from futek_cli import MockFUTEKDeviceCLI
+        if isinstance(dev, MockFUTEKDeviceCLI):
+            return "MOCK (synthetic force)"
+    except Exception:
+        pass
+    return "REAL"
+
+
 def _open_futek():
     # return the cached live FUTEK device (opening it once), or None to simulate
-    # (Mac / no driver / FORCE_SIM).
+    # (Mac / no driver / FORCE_SIM). Logs verbosely so a failed real connection is
+    # visible in the terminal instead of silently falling back to simulated force.
     global _FUTEK_CACHE
     if os.environ.get("FORCE_SIM"):
+        print("[futek] FORCE_SIM is set -> using simulated force, NOT the load cell.")
         return None
     if _FUTEK_CACHE is not None:
+        print(f"[futek] reusing the already-open load cell: {_futek_kind(_FUTEK_CACHE)}")
         return _FUTEK_CACHE
     try:
-        from futek_cli import FUTEKDeviceCLI
-        _FUTEK_CACHE = FUTEKDeviceCLI()
-    except Exception:
+        import futek_cli
+        real_ok = getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
+        print(f"[futek] opening the load cell... real .NET FUTEK driver loaded = {real_ok}")
+        if not real_ok:
+            print(f"[futek]   the FUTEK/.NET driver did NOT load: {getattr(futek_cli, '_FUTEK_IMPORT_ERROR', None)}")
+            print("[futek]   -> falling back to the MOCK load cell (synthetic force). On Windows this "
+                  "usually means the FUTEK DLLs in libs/windows/ are missing or .NET is unavailable.")
+        _FUTEK_CACHE = futek_cli.FUTEKDeviceCLI()
+        kind = _futek_kind(_FUTEK_CACHE)
+        if kind == "REAL":
+            print(f"[futek] >>> REAL load cell CONNECTED: model={getattr(_FUTEK_CACHE, 'ModelNumber', '?')} "
+                  f"serial={getattr(_FUTEK_CACHE, 'SerialNumber', '?')} units={getattr(_FUTEK_CACHE, 'UnitCode', '?')}")
+        else:
+            print(f"[futek] >>> load cell is {kind} - the REAL load cell is NOT being read.")
+    except Exception as exc:
+        import traceback
+        print(f"[futek] FAILED to open the load cell: {type(exc).__name__}: {exc}")
+        print("[futek]   the driver loaded but opening the device failed - is the USB load cell "
+              "plugged in and detected? Falling back to simulated force.")
+        traceback.print_exc()
         _FUTEK_CACHE = None
     return _FUTEK_CACHE
 
@@ -666,6 +699,60 @@ class RunEngine:
 
     # -- the fatigue (cyclical) loop ----------------------------------------
 
+    def start_shear(self):
+        # live shear-force capture. The shear test does NOT drive the actuator (the
+        # operator applies shear by hand); this only reads the load cell and streams
+        # force to the UI, so it just needs the FUTEK, not the Zaber.
+        if self.is_running():
+            return False, "A test is already in progress."
+        STATE.stop_requested = False
+        STATE.pause_requested = False
+        self._set(status="waiting", force=0.0, elapsed=0.0, samples=0, trace=[],
+                  disconnect=False, safety_stop=False, message="initializing load cell - please wait")
+        self._thread = threading.Thread(target=self._run_shear, daemon=True)
+        self._thread.start()
+        return True, "Shear test started."
+
+    def _run_shear(self):
+        futek = _open_futek()
+        simulated = futek is None or _futek_kind(futek) != "REAL"
+        print(f"[shear] starting live shear read - load cell = {_futek_kind(futek)}")
+        t0 = time.time()
+        readings = []          # full [time, force] series for analysis
+        trace = []             # recent window for the live graph (dense)
+        init_force = None
+        force = 0.0
+        idx = 0
+        self._set(status="running", simulated=simulated, force=0.0, elapsed=0.0, samples=0,
+                  trace=[], disconnect=False, safety_stop=False, message="")
+        try:
+            while not STATE.stop_requested:
+                f = self._read_force(futek, 0.0)
+                if init_force is None:
+                    init_force = f
+                # tare to the start-of-test baseline, then magnitude (positive for a
+                # load cell of either polarity), same convention as the press tests.
+                force = abs(f - init_force)
+                t = time.time() - t0
+                idx += 1
+                readings.append([round(t, 4), round(force, 4)])
+                trace.append([round(t, 4), round(force, 4)])
+                if len(trace) > CYC_TRACE_WINDOW:
+                    del trace[0:len(trace) - CYC_TRACE_WINDOW]
+                fields = dict(force=force, elapsed=t, samples=idx)
+                if idx % 5 == 0:           # throttle the trace payload (like fatigue)
+                    fields["trace"] = list(trace)
+                self._set(**fields)
+                time.sleep(SAMPLE_DT)
+            print(f"[shear] stopped after {idx} samples ({(time.time() - t0):.1f} s)")
+            # send the FULL series on stop so the analysis has every reading, not just
+            # the rolling live window.
+            self._set(status="stopped", force=force, elapsed=time.time() - t0, samples=idx,
+                      trace=readings, message=f"Shear test stopped. {idx} samples captured.")
+        except Exception as exc:
+            print(f"[shear] failed: {exc}")
+            self._set(status="error", message=f"Shear test failed: {exc}")
+
     def start_cyclical(self, params, test_folder, surface_area_mm2=325.0):
         if self.is_running():
             return False, "A test is already in progress."
@@ -701,10 +788,14 @@ class RunEngine:
         # recorded force IS the target waveform (a clean sine); on the real rig the
         # actuator position is driven to track the waveform while the FUTEK is read.
         axis = STATE.axis
+        print("[fatigue] starting fatigue (cyclical) run - opening the load cell now")
+        if axis is None:
+            print("[fatigue] no Zaber connected -> simulated run, load cell not opened")
         futek = _open_futek() if axis is not None else None
         from futek_cli import MockFUTEKDeviceCLI
         real_run = (axis is not None) and (futek is not None) and not isinstance(futek, MockFUTEKDeviceCLI)
         force_futek = futek if real_run else None
+        print(f"[fatigue] real_run={real_run} -> {'reading the REAL load cell' if real_run else 'using simulated force'}")
         simulated = not real_run
         lower = float(params.get("lower_force", 1.0))
         upper = float(params.get("upper_force", 20.0))
