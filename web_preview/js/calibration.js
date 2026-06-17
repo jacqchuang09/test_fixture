@@ -182,7 +182,7 @@
         const finish = (text) => {
           if (fujiTimer) { clearInterval(fujiTimer); fujiTimer = null; }
           setCalibrationControlsLocked(false, "READY", "calibration controls ready.", "kept");
-          button.textContent = "▶ Start Fuji Film Test";
+          button.textContent = "▶ Start Fuji";
           if (text) addCalibrationUpdate(text);
         };
 
