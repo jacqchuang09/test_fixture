@@ -843,6 +843,18 @@ class RunEngine:
                 self._set(cycle=cycle)
                 time.sleep(SAMPLE_DT)
 
+            if STATE.stop_requested:
+                # Stop was pressed: halt the actuator in place RIGHT NOW so it stops
+                # promptly. /api/stop only set the flag (it must not touch the serial
+                # port while this loop owns it); without this explicit stop the device
+                # would keep running its queued 100 Hz waveform moves before homing,
+                # which is the lag felt after clicking Stop. Then home.
+                print("[fatigue] stop requested - halting actuator immediately, then homing")
+                self._stop_axis(axis)
+                # status "stopping" is ignored by the poller, so the frontend's
+                # "returning home" pill stays put instead of flipping back to RUNNING
+                # while the actuator homes.
+                self._set(status="stopping", message="stopping - actuator halted, returning to home...")
             self._home(axis)
             self._write_cyclical(test_folder, readings)
             self._write_cyclical_graph(test_folder, readings)
