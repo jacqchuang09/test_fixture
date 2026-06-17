@@ -259,6 +259,7 @@ class RunEngine:
         STATE.stop_requested = False
         base_pos = STATE.position_mm
         target_pos = base_pos + distance
+        print(f"[calibration] manual_move START distance={distance:.3f} mm  base={base_pos:.2f}  target={target_pos:.2f}  simulated={(axis is None)}")
         # waiting-to-start: the load cell can still take a few seconds to initialize
         # sometimes; show it before the open so the UI can lock + show a wait pill.
         self._set(status="waiting", simulated=(axis is None), force=0.0, position=base_pos,
@@ -335,16 +336,20 @@ class RunEngine:
                         return {"ok": True, "position": STATE.position_mm, "force": force,
                                 "stopped": True, "simulated": simulated, "message": "Manual move stopped."}
                     if time.time() > deadline:
+                        print(f"[calibration] manual_move: DEADLINE reached at pos={STATE.position_mm:.2f} mm "
+                              f"(is_busy never reported idle in time) - ending move")
                         self._stop_axis(axis)
                         break
                     try:
                         still_moving = axis.is_busy()
                         busy_fail = 0
-                    except Exception:
+                    except Exception as exc:
                         busy_fail += 1
                         still_moving = busy_fail < 3   # after 3 failed queries in a row, treat as done
+                        print(f"[calibration] manual_move: is_busy() failed {busy_fail}/3: {exc}")
                     STATE._read_position()    # stream the live position (3-strike comms_lost inside)
                     if STATE.comms_lost:
+                        print(f"[calibration] manual_move: COMMS LOST at pos={STATE.position_mm:.2f} mm")
                         self._stop_axis(axis)
                         self._set(status="error", disconnect=True, position=STATE.position_mm,
                                   message="Actuator connection lost during the move.")
@@ -352,8 +357,10 @@ class RunEngine:
                                 "message": "Actuator connection lost during the move."}
                     tripped = record_and_check()
                     if tripped is not None:
+                        print(f"[calibration] manual_move: SAFETY STOP at pos={STATE.position_mm:.2f} mm")
                         return tripped
                     if not still_moving:      # the device finished the move
+                        print(f"[calibration] manual_move: device reported IDLE at pos={STATE.position_mm:.2f} mm")
                         self._stop_axis(axis)
                         break
                     time.sleep(JOG_POLL_DT)
@@ -374,6 +381,7 @@ class RunEngine:
                     if tripped is not None:
                         return tripped
                     time.sleep(SAMPLE_DT)
+            print(f"[calibration] manual_move COMPLETE pos={STATE.position_mm:.2f} mm  force={force:.2f} N - returning to UI")
             self._set(status="completed", position=STATE.position_mm, force=force, trace=list(trace),
                       message=f"Manual move complete. Position {STATE.position_mm:.2f} mm.")
             return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,

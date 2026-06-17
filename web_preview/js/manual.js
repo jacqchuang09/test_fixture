@@ -345,21 +345,39 @@
       }
 
       async function manualMove(distance) {
-        if (calibrationMoveInFlight) return;
+        if (calibrationMoveInFlight) {
+          console.warn("[calibration jog] ignored a click - a move is already in flight");
+          return;
+        }
         const target = currentPosition + distance;
         if (target < ACTUATOR_MIN_MM || target > ACTUATOR_MAX_MM) {
           addCalibrationUpdate(`ERROR: move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
           return;
         }
         calibrationMoveInFlight = true;
+        // moveDone guards against a late status poll re-locking the controls AFTER the
+        // move has finished: setInterval fires an async callback that awaits /api/run-
+        // status, so a poll already in flight when the move ends would otherwise call
+        // setCalibrationControlsLocked(true, ...) after we unlocked - leaving the window
+        // stuck on "MOVING" with everything disabled. This was the intermittent bug.
+        let moveDone = false;
+        const startedAt = performance.now();
+        console.log(`[calibration jog] START distance=${distance.toFixed(3)} mm  from ${currentPosition.toFixed(2)} -> ${target.toFixed(2)} mm`);
         // lock the whole calibration window while the stage travels (queueing more
         // commands would flood the Zaber), and show WAITING TO START while the load
         // cell initializes, then MOVING during the continuous travel.
         setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
         addCalibrationUpdate(`moving ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm…`);
+        let lastStatus = "";
         const pollTimer = setInterval(async () => {
+          if (moveDone) return;                       // move finished - stop touching the UI
           const status = await callApi("/api/run-status");
+          if (moveDone) return;                       // it finished while this poll was in flight - do NOT re-lock
           if (!status || !status.ok) return;
+          if (status.status !== lastStatus) {
+            console.log(`[calibration jog] status -> ${status.status}  pos=${Number(status.position || 0).toFixed(2)} mm  force=${Number(status.force || 0).toFixed(2)} N`);
+            lastStatus = status.status;
+          }
           if (typeof status.position === "number") setPositionReadout(status.position);
           if (status.status === "waiting") {
             setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
@@ -371,8 +389,11 @@
         let disconnected = false;
         try {
           const result = await moveApiWithTimeout({ distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
+          console.log(`[calibration jog] /api/move returned after ${Math.round(performance.now() - startedAt)} ms`, result);
           // update the readout once the stage has finished moving.
-          if (result && result.disconnect) {
+          if (result && result.timeout) {
+            addCalibrationUpdate("WARNING: move timed out - controls unlocked. Check the actuator.");
+          } else if (result && result.disconnect) {
             disconnected = true;
             addCalibrationUpdate(result.message || "Actuator connection lost during the move.");
             showDisconnectDialog(result.message);
@@ -384,8 +405,9 @@
             addCalibrationUpdate(`move complete. position ${result.position.toFixed(2)} mm.`);
           }
         } finally {
-          // ALWAYS unlock so the controls can never get stuck showing "moving"; show the
-          // disconnected state when the move dropped the connection.
+          // mark done BEFORE clearing the timer so any in-flight poll bails out, then
+          // ALWAYS unlock so the controls can never get stuck showing "moving".
+          moveDone = true;
           clearInterval(pollTimer);
           calibrationMoveInFlight = false;
           if (disconnected) {
@@ -393,5 +415,6 @@
           } else {
             setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
           }
+          console.log(`[calibration jog] DONE (disconnected=${disconnected}) - controls unlocked`);
         }
       }
