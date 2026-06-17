@@ -368,10 +368,15 @@
               `actuator moving - ${Number(status.force || 0).toFixed(2)} N at ${Number(status.position || 0).toFixed(2)} mm`, "discarded");
           }
         }, 100);
+        let disconnected = false;
         try {
           const result = await moveApiWithTimeout({ distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
           // update the readout once the stage has finished moving.
-          if (result && result.stopped_for_safety) {
+          if (result && result.disconnect) {
+            disconnected = true;
+            addCalibrationUpdate(result.message || "Actuator connection lost during the move.");
+            showDisconnectDialog(result.message);
+          } else if (result && result.stopped_for_safety) {
             if (typeof result.position === "number") setPositionReadout(result.position);
             addCalibrationUpdate(result.message || "Force limit reached. Move stopped for safety.");
           } else if (result && typeof result.position === "number") {
@@ -379,8 +384,14 @@
             addCalibrationUpdate(`move complete. position ${result.position.toFixed(2)} mm.`);
           }
         } finally {
+          // ALWAYS unlock so the controls can never get stuck showing "moving"; show the
+          // disconnected state when the move dropped the connection.
           clearInterval(pollTimer);
           calibrationMoveInFlight = false;
-          setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
+          if (disconnected) {
+            setCalibrationControlsLocked(false, "DISCONNECTED", "actuator disconnected - use the Zaber Launcher.", "discarded");
+          } else {
+            setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
+          }
         }
       }

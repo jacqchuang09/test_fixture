@@ -170,13 +170,11 @@
         setCyclicalControlsLocked(false);
         document.getElementById("cyclicalPauseButton").disabled = true;
         if (status.disconnect) {
-          // hard-block Start until the actuator is reconnected; watch for it live.
-          document.getElementById("cyclicalStartButton").disabled = true;
-          setStatePill("cyclicalState", "DISCONNECTED", status.message || "Actuator connection lost. Reconnect the Zaber to continue.");
-          startReconnectWatch(() => {
-            document.getElementById("cyclicalStartButton").disabled = false;
-            setStatePill("cyclicalState", "RECONNECTED", "Zaber reconnected and re-homed. You can continue.");
-          });
+          // no auto-reconnect: the operator fixes it with the Zaber Launcher (move back
+          // to home), reconnects, then restarts. Leave Start enabled for that.
+          document.getElementById("cyclicalStartButton").disabled = false;
+          setStatePill("cyclicalState", "DISCONNECTED", status.message || "Actuator connection lost.", "discarded");
+          showDisconnectDialog(status.message);
           return;
         }
         if (status.safety_stop) {

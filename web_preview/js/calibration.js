@@ -218,14 +218,11 @@
           } else if (status.status === "error" || status.status === "stopped") {
             finish(status.message || "Fuji Film Test stopped.");
             if (status.disconnect) {
-              // hard-block the Start button until the actuator reconnects; watch live.
-              const button = document.getElementById("fujiFilmButton");
-              button.disabled = true;
-              addCalibrationUpdate("Actuator connection lost. Reconnect the Zaber to continue.");
-              startReconnectWatch(() => {
-                button.disabled = false;
-                addCalibrationUpdate("Zaber reconnected and re-homed. You can continue.");
-              });
+              // no auto-reconnect: fix it with the Zaber Launcher (move back to home),
+              // reconnect, then start again. finish() already unlocked the controls.
+              setStatePill("calibrationState", "DISCONNECTED", "actuator disconnected - use the Zaber Launcher.", "discarded");
+              addCalibrationUpdate("Actuator connection lost during the Fuji Film test.");
+              showDisconnectDialog(status.message);
             } else if (status.safety_stop) {
               // safety trip: the engine already stopped and homed. Dialog, then
               // restart the Fuji Film test on Continue.

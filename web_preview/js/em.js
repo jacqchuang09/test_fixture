@@ -254,13 +254,11 @@
           document.getElementById("emPauseButton").disabled = true;
           document.getElementById("emTestCloseButton").disabled = false;
           if (status.disconnect) {
-            // hard-block Start until the actuator is reconnected; watch for it live.
-            document.getElementById("emStartButton").disabled = true;
-            setEmState("DISCONNECTED", status.message || "Actuator connection lost. Reconnect the Zaber to continue.");
-            startReconnectWatch(() => {
-              document.getElementById("emStartButton").disabled = false;
-              setEmState("RECONNECTED", "Zaber reconnected and re-homed. You can continue.");
-            });
+            // no auto-reconnect: the operator moves the actuator back to home with the
+            // Zaber Launcher, reconnects, then restarts. Leave Start enabled for that.
+            document.getElementById("emStartButton").disabled = false;
+            setEmState("DISCONNECTED", status.message || "Actuator connection lost.", "discarded");
+            showDisconnectDialog(status.message);
           } else if (status.safety_stop) {
             // safety trip (force spike / ceiling / travel limit): the engine already
             // stopped and returned home. Pop a dialog; on Continue, restart THIS run

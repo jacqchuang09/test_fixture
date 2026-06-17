@@ -108,10 +108,10 @@ class HardwareState:
     def connect_zaber(self, comport, set_reference=True):
         # connect on port selection, like emilio's trace_comport. Falls back to
         # a simulated stage (still returns ok=True) when no hardware responds.
-        # set_reference: on a user-initiated connect we define the actuator's current
-        # position as the 17 mm baseline (the operator connects with it parked there),
-        # which fixes the device's absolute reference. An auto-reconnect passes False
-        # so it does NOT redefine the reference at an unknown mid-run position.
+        # set_reference is kept for call compatibility but is no longer used: the
+        # actuator keeps a correct absolute position across power cycles, so connect
+        # never redefines the reference (doing so was wrong when connecting away from
+        # home). Home is reached by move_absolute(17), not by relabeling the current spot.
         self.stop_requested = False
         self.pause_requested = False
         self.comport = comport
@@ -141,18 +141,17 @@ class HardwareState:
             self.comms_lost = False
             self.connection_lost = False
             self._set_default_speed(2.0)   # cap the actuator's default move speed at 2 mm/s
-            ref_note = ""
-            if set_reference:
-                # define the current physical position as the 17 mm baseline (the
-                # operator connects with the actuator parked there). This corrects the
-                # device's absolute reference WITHOUT homing into the load cell, so
-                # position and travel limits are right for the session. No motion.
-                self.set_baseline_position(HOME_MM)
-                ref_note = f" Reference set to {HOME_MM:g} mm baseline."
+            # Do NOT redefine the reference here. The actuator keeps a correct absolute
+            # position across power cycles (it reads ~17 mm when physically retracted at
+            # home), so we trust the device's own coordinates and just read them. Setting
+            # "current position = 17" on connect was wrong whenever the operator connected
+            # while NOT at home: it told the device it was already at 17, so the
+            # move-to-17 at the start of each test became a no-op and the press began from
+            # the wrong place. Tests now drive to the true 17 mm home with move_absolute.
             self._read_position()
             return {
                 "ok": True, "connected": True, "comport": comport,
-                "message": f"Connected to Zaber on {comport}.{ref_note} Current position: {self.position_mm:.2f} mm.",
+                "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm:.2f} mm.",
             }
 
         self.cli = None

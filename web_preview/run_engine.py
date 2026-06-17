@@ -178,11 +178,17 @@ class RunEngine:
     # -- the press loop -----------------------------------------------------
 
     def _home(self, axis):
+        # drive to the true 17 mm home (the device's absolute coordinate) and wait for
+        # the actuator to arrive before anything else happens. Because the reference is
+        # no longer redefined on connect, move_absolute(17) actually moves the actuator
+        # to physical home even when it was somewhere else when the test started.
         if axis is not None:
             try:
                 if axis.is_parked():
                     axis.unpark()
-                axis.move_absolute(HOME_MM, _mm_unit())
+                axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
+                STATE._read_position()
+                return
             except Exception:
                 pass
         STATE.position_mm = HOME_MM

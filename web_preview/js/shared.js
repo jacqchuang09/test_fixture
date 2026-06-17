@@ -478,27 +478,20 @@
           : `<p class="hint">No fatigue summary found. Expected Fatigue_Stats.xlsx (or .csv) in this folder.</p>`;
       }
 
-      // live reconnect watcher: after a Zaber disconnect, poll the backend to
-      // reopen the last known port. On success the actuator is re-homed (its
-      // position was unknown after the comms loss) and onReconnect() re-enables the
-      // owning test window. Only one watcher runs at a time.
-      let reconnectWatchTimer = null;
-      function startReconnectWatch(onReconnect) {
-        if (reconnectWatchTimer) return;
-        reconnectWatchTimer = setInterval(async () => {
-          const res = await callApi("/api/zaber-reconnect", {});
-          if (res && res.connected === true) {
-            stopReconnectWatch();
-            if (typeof onReconnect === "function") onReconnect(res);
-          }
-        }, 2000);
+      // The Zaber dropped its connection (cable unplugged or motor power lost). There is
+      // deliberately NO automatic reconnect / poll loop: reconnecting and re-homing while
+      // the actuator may have been mid-move is unsafe, and the watcher could leave the UI
+      // stuck. Instead the operator fixes it by hand with the Zaber Launcher (move the
+      // actuator back to home), then reconnects and restarts the test.
+      function showDisconnectDialog(message) {
+        showErrorDialog(
+          (message ? String(message).trim() + " " : "") +
+            "Open the Zaber Launcher and move the actuator back to its home position, then reconnect the Zaber and start the test again.",
+          "Zaber disconnected");
       }
-      function stopReconnectWatch() {
-        if (reconnectWatchTimer) {
-          clearInterval(reconnectWatchTimer);
-          reconnectWatchTimer = null;
-        }
-      }
+      // kept as a harmless no-op: the modal close buttons still call it, but there is no
+      // reconnect watcher to stop anymore.
+      function stopReconnectWatch() {}
 
       function metricCards(metrics) {
         return `
