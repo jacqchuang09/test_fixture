@@ -356,8 +356,12 @@ class EMAnalysis:
                     zaber_x_i = x_smooth
                 zaber_y_i.append(y_smooth)
 
-                # 1st derivative of the P.S curve.
-                fir_dev_ij = np.diff(y_smooth) / np.diff(x_smooth)
+                # 1st derivative of the P.S curve. Flat pressure regions (a dwell)
+                # give np.diff(x)=0; guard the divide so they become 0 slope instead
+                # of inf/NaN (which would otherwise warn and break peak detection).
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    fir_dev_ij = np.diff(y_smooth) / np.diff(x_smooth)
+                fir_dev_ij = np.nan_to_num(fir_dev_ij, nan=0.0, posinf=0.0, neginf=0.0)
 
                 # First filter: clamp out-of-range slopes to 0.
                 fir_dev_ij[(fir_dev_ij > 1) | (fir_dev_ij < 0)] = 0
@@ -579,25 +583,31 @@ class EMAnalysis:
         """Compute result statistics, persist them (pkl/xlsx/json), and return the dict."""
         result = {}
 
-        result["max_ps"] = self.max_ps_numeric
-        result["mean_max_ps"] = np.nanmean(result["max_ps"], axis=0)
-        result["std_max_ps"] = np.nanstd(result["max_ps"], axis=0, ddof=1)
-        result["cov_max_ps"] = result["std_max_ps"] / result["mean_max_ps"]
+        # A channel that never produced a valid inflection is all-NaN, and a single
+        # run gives ddof=1 std no degrees of freedom - both are expected and yield NaN
+        # (handled downstream). Silence the benign RuntimeWarnings they raise.
+        import warnings
+        with warnings.catch_warnings(), np.errstate(divide="ignore", invalid="ignore"):
+            warnings.simplefilter("ignore", RuntimeWarning)
+            result["max_ps"] = self.max_ps_numeric
+            result["mean_max_ps"] = np.nanmean(result["max_ps"], axis=0)
+            result["std_max_ps"] = np.nanstd(result["max_ps"], axis=0, ddof=1)
+            result["cov_max_ps"] = result["std_max_ps"] / result["mean_max_ps"]
 
-        result["max_kpa"] = self.max_kPa_numeric
-        result["mean_max_kpa"] = np.nanmean(result["max_kpa"], axis=0)
-        result["std_max_kpa"] = np.nanstd(result["max_kpa"], ddof=1, axis=0)
-        result["cov_max_kpa"] = result["std_max_kpa"] / result["mean_max_kpa"]
+            result["max_kpa"] = self.max_kPa_numeric
+            result["mean_max_kpa"] = np.nanmean(result["max_kpa"], axis=0)
+            result["std_max_kpa"] = np.nanstd(result["max_kpa"], ddof=1, axis=0)
+            result["cov_max_kpa"] = result["std_max_kpa"] / result["mean_max_kpa"]
 
-        result["max_cap"] = self.c
-        result["mean_max_cap"] = np.mean(result["max_cap"], axis=0)
-        result["std_max_cap"] = np.std(result["max_cap"], ddof=1, axis=0)
-        result["max_cap_cov"] = result["std_max_cap"] / result["mean_max_cap"]
+            result["max_cap"] = self.c
+            result["mean_max_cap"] = np.mean(result["max_cap"], axis=0)
+            result["std_max_cap"] = np.std(result["max_cap"], ddof=1, axis=0)
+            result["max_cap_cov"] = result["std_max_cap"] / result["mean_max_cap"]
 
-        result["inf_cap"] = self.inf_CAP_numeric
-        result["mean_inf_cap"] = np.nanmean(result["inf_cap"], axis=0)
-        result["std_inf_cap"] = np.nanstd(result["inf_cap"], ddof=1, axis=0)
-        result["cov_inf_cap"] = result["std_inf_cap"] / result["mean_inf_cap"]
+            result["inf_cap"] = self.inf_CAP_numeric
+            result["mean_inf_cap"] = np.nanmean(result["inf_cap"], axis=0)
+            result["std_inf_cap"] = np.nanstd(result["inf_cap"], ddof=1, axis=0)
+            result["cov_inf_cap"] = result["std_inf_cap"] / result["mean_inf_cap"]
 
         # Channel variability across 9 incremental points (5 kPa steps).
         n_runs_dim = len(self.cap_inc)

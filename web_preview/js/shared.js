@@ -340,7 +340,9 @@
           polling = false;
           fill.style.width = "100%";
           copy.textContent = "Analysis outputs ready.";
-          await new Promise((resolve) => setTimeout(resolve, 250));
+          // wait for the 0.4s fill transition to finish so the bar visibly reaches
+          // 100% before the modal closes and the results appear.
+          await new Promise((resolve) => setTimeout(resolve, 550));
           modal.close();
           return result;
         } catch (error) {
