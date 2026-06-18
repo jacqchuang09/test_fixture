@@ -727,7 +727,12 @@ class Handler(SimpleHTTPRequestHandler):
         import webview
 
         try:
-            result = config.DESKTOP_WINDOW.create_file_dialog(webview.FOLDER_DIALOG)
+            # newer pywebview uses FileDialog.FOLDER; older uses the FOLDER_DIALOG
+            # constant (now deprecated). Prefer the new enum, fall back to the old.
+            folder_dialog = getattr(getattr(webview, "FileDialog", None), "FOLDER", None)
+            if folder_dialog is None:
+                folder_dialog = webview.FOLDER_DIALOG
+            result = config.DESKTOP_WINDOW.create_file_dialog(folder_dialog)
         except Exception as exc:
             return False, f"Could not open folder picker: {exc}"
 

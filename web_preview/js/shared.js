@@ -308,40 +308,44 @@
         copy.textContent = "Starting analysis…";
         modal.showModal();
 
-        // Poll the backend for REAL phase progress (reading files -> aligning ->
-        // running the pipeline -> writing plots) and glide the bar to each reported
-        // value. The width never moves backward and is held just under 100% until the
-        // work actually returns, so the bar reflects real state, not a fixed timer.
         let shown = 5;
-        let lastReal = 5;
-        let polling = true;
+        let target = 5;       // latest REAL progress (set by the poll), the bar eases to it
+        let running = true;
+
+        // The bar animates on its OWN timer, independent of the network poll, so it
+        // keeps moving even when a progress request is slow - e.g. while matplotlib
+        // holds the Python GIL and the backend can't answer the poll for a second or
+        // two. It eases toward the real target and, between updates, drifts slowly
+        // toward 95 so it never freezes; real updates pull it ahead. Never hits 100
+        // until the work actually returns.
+        const anim = setInterval(() => {
+          const cap = 95;
+          const goal = Math.max(target, shown + (cap - shown) * 0.012);  // self-drift so it never stalls
+          const next = Math.min(cap, shown + Math.max(0.15, (goal - shown) * 0.12));
+          if (next > shown + 0.05) { shown = next; fill.style.width = `${shown}%`; }
+        }, 60);
+
+        // Poll the backend for REAL phase progress (reading files -> per-run plotting
+        // -> writing outputs). Slow/failed polls just don't advance the target; the
+        // animation keeps drifting, so the bar is never stuck on a stalled request.
         const poll = async () => {
-          while (polling) {
+          while (running) {
             const p = await callApi("/api/analysis-progress");
-            if (polling && p && p.ok && typeof p.pct === "number") {
-              if (p.pct > lastReal) lastReal = p.pct;
+            if (running && p && p.ok && typeof p.pct === "number") {
+              target = Math.min(95, Math.max(target, p.pct));
               if (p.message) copy.textContent = p.message;
             }
-            // glide toward the latest real milestone with a small lead so motion stays
-            // smooth between updates, never freezing and never reaching 100 until the
-            // work actually returns. The pipeline reports ~14 real points, so this
-            // mostly just smooths the gaps.
-            const ceiling = Math.min(96, lastReal + 8);
-            if (shown < ceiling) {
-              shown = Math.min(ceiling, shown + Math.max(0.4, (ceiling - shown) * 0.18));
-              fill.style.width = `${shown}%`;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 120));
+            await new Promise((resolve) => setTimeout(resolve, 200));
           }
         };
         poll();
 
         try {
           const result = await Promise.resolve().then(work);
-          polling = false;
-          // the bar tracked the real phases the whole way (it is near the top by now),
-          // so snap to 100% and show it for a brief moment so it visibly completes,
-          // then reveal the results. 120 ms is a completion flash, not a wait.
+          running = false;
+          clearInterval(anim);
+          // snap to 100% and show it briefly so the bar visibly completes, then reveal
+          // the results. 120 ms is a completion flash, not a wait.
           fill.style.transition = "none";
           fill.style.width = "100%";
           copy.textContent = "Analysis outputs ready.";
@@ -349,7 +353,8 @@
           modal.close();
           return result;
         } catch (error) {
-          polling = false;
+          running = false;
+          clearInterval(anim);
           modal.close();
           throw error;
         }
