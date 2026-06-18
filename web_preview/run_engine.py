@@ -464,7 +464,7 @@ class RunEngine:
             print(f"[manual force] no move - {msg}")
             self._set(status="completed", position=STATE.position_mm, force=current_force, message=msg)
             return {"ok": True, "position": STATE.position_mm, "force": current_force, "simulated": simulated, "message": msg}
-        if (not going_down) and current_force <= target_force:
+        if (not going_down) and current_force <= max(target_force, 0.1):
             msg = f"Already at {current_force:.2f} N (<= target {target_force:.2f} N). Decompression does not move down."
             print(f"[manual force] no move - {msg}")
             self._set(status="completed", position=STATE.position_mm, force=current_force, message=msg)
@@ -548,7 +548,10 @@ class RunEngine:
                     break
                 # decompression: stop the first time force has FALLEN to the target, or
                 # the actuator is back at home (the floor - it cannot retract further).
-                if (not going_down) and (force <= target_force or STATE.position_mm <= HOME_MM + 0.02):
+                # The threshold is floored at 0.1 N: with abs() force never lands exactly
+                # on 0, so a target of 0 needs a small noise-floor tolerance to register
+                # "reached 0" (non-zero targets are unaffected - max() keeps them exact).
+                if (not going_down) and (force <= max(target_force, 0.1) or STATE.position_mm <= HOME_MM + 0.02):
                     self._stop_axis(axis)
                     break
                 time.sleep(SAMPLE_DT)
