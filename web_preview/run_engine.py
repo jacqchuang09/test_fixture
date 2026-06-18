@@ -546,8 +546,8 @@ class RunEngine:
                 if going_down and force >= target_force:
                     self._stop_axis(axis)
                     break
-                # decompression: stop once force has FALLEN to the target, or the
-                # actuator is back at home (the floor - it cannot retract further).
+                # decompression: stop the first time force has FALLEN to the target, or
+                # the actuator is back at home (the floor - it cannot retract further).
                 if (not going_down) and (force <= target_force or STATE.position_mm <= HOME_MM + 0.02):
                     self._stop_axis(axis)
                     break

@@ -204,8 +204,8 @@
           setManualState("ERROR", (result && result.message) || "Manual move failed.");
           return;
         }
-        const mode = result.simulated ? "simulated" : "real";
-        setManualState("READY", `move complete (${mode}). position ${manualPosition.toFixed(2)} mm.`);
+        const sim = result.simulated ? " (simulated)" : "";
+        setManualState("READY", `move complete${sim}. position ${manualPosition.toFixed(2)} mm.`);
       }
 
       // Force-feedback move: drive the actuator at the actuator speed until the load
@@ -272,8 +272,8 @@
           setManualState("ERROR", (result && result.message) || "Manual force move failed.");
           return;
         }
-        const mode = result.simulated ? "simulated" : "real";
-        setManualState("READY", `${result.message || (description + " complete")} (${mode})`);
+        const sim = result.simulated ? " (simulated)" : "";
+        setManualState("READY", `${result.message || (description + " complete")}${sim}`);
       }
 
       function manualTestMove(direction) {
@@ -285,6 +285,7 @@
           if (direction === "down") {
             recordManualForceMove(targetForce, "down", `compress to ${targetForce.toFixed(2)} N`);
           } else {
+            // decompress releases UP until the load cell first reads the target force.
             recordManualForceMove(targetForce, "up", `decompress to ${targetForce.toFixed(2)} N`);
           }
           return;
