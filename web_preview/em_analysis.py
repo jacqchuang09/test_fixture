@@ -208,6 +208,10 @@ class EMAnalysis:
             cap_time = self.cap[i].iloc[:, 0].values.astype(float)
             valid_mask = ~np.isnan(cap_time)
             cap_time_clean = cap_time[valid_mask]
+            if cap_time_clean.size == 0:
+                raise ValueError(
+                    f"CAP file for run {self.run_numbers[i]} has no usable timestamps "
+                    "(its first column is empty or all NaN).")
 
             t_c_i = np.arange(0, cap_time_clean[-1] + 0.005, 0.005)
             t_f_i = np.arange(0, elapsed[-1] + 0.005, 0.005)
@@ -218,11 +222,17 @@ class EMAnalysis:
             cap_interp = np.zeros((len(t_c_i), self.ch))
             for j in range(self.ch):
                 col_idx = j + self.v
-                cap_data = self.cap[i].iloc[:, col_idx].values.astype(float)
-                cap_data_clean = cap_data[valid_mask]
-                baseline = cap_data_clean[0]
-                cap_data_clean = cap_data_clean - baseline
-                cap_interp[:, j] = np.interp(t_c_i, cap_time_clean, cap_data_clean)
+                cap_data = self.cap[i].iloc[:, col_idx].values.astype(float)[valid_mask]
+                # Drop samples where THIS channel is NaN. A blank/NaN cell - often the
+                # very first sample - would otherwise poison the baseline and turn the
+                # whole channel into NaN, which later crashes the release-peak sync
+                # (empty chan_candidates). A channel with no finite data stays flat zero.
+                finite = ~np.isnan(cap_data)
+                if not finite.any():
+                    continue
+                ct = cap_time_clean[finite]
+                cd = cap_data[finite] - cap_data[finite][0]   # baseline = first finite value
+                cap_interp[:, j] = np.interp(t_c_i, ct, cd)
 
             fut_interp = np.interp(t_f_i, elapsed, self.fut[i].iloc[:, 1].values.astype(float))
             self.run.append([cap_interp, fut_interp])
@@ -234,15 +244,16 @@ class EMAnalysis:
 
         for i in range(self.cap_size):
             # The max CAP corresponds to when the FUTEK released pressure (inflection).
-            temp_max_cap = np.max(temp_run[i][0], axis=0)
+            temp_max_cap = np.nanmax(temp_run[i][0], axis=0)
             self.shorted_ch = np.where(temp_max_cap > 10)[0]  # >10 pF change = shorted
             temp_run[i][0][:, self.shorted_ch] = 0
 
-            # Pick the channel with the largest CAP swing to sync on.
-            max_per_channel = np.max(temp_run[i][0], axis=0)
-            global_max = np.max(max_per_channel)
+            # Pick the channel with the largest CAP swing to sync on. nan-safe and
+            # guarded so a degenerate run cannot crash with an empty selection.
+            max_per_channel = np.nanmax(temp_run[i][0], axis=0)
+            global_max = np.nanmax(max_per_channel)
             chan_candidates = np.where(max_per_channel == global_max)[0]
-            chan = chan_candidates[0]
+            chan = int(chan_candidates[0]) if chan_candidates.size else 0
 
             loc_c = np.argmax(self.run[i][0], axis=0)
             loc_f = np.nanargmax(self.run[i][1])
