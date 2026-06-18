@@ -97,6 +97,7 @@ class ZaberDisconnect(Exception):
 # once and reuse it for every move/run; it is dropped only on a read failure
 # (disconnect) so the next operation re-detects it.
 _FUTEK_CACHE = None
+_FUTEK_FAILED = False   # True after a real load-cell open fails, so we stop retrying it every read
 
 
 def _futek_kind(dev):
@@ -116,13 +117,21 @@ def _open_futek():
     # return the cached live FUTEK device (opening it once), or None to simulate
     # (Mac / no driver / FORCE_SIM). Logs verbosely so a failed real connection is
     # visible in the terminal instead of silently falling back to simulated force.
-    global _FUTEK_CACHE
+    global _FUTEK_CACHE, _FUTEK_FAILED
     if os.environ.get("FORCE_SIM"):
-        print("[futek] FORCE_SIM is set -> using simulated force, NOT the load cell.")
         return None
     if _FUTEK_CACHE is not None:
-        print(f"[futek] reusing the already-open load cell: {_futek_kind(_FUTEK_CACHE)}")
+        # already open - reuse it silently. (No log here: the manual window's
+        # continuous sampler calls this ~10x/second, so a print would flood the log.)
         return _FUTEK_CACHE
+    if _FUTEK_FAILED:
+        # We already tried and failed to open the real load cell this session. Do NOT
+        # retry the .NET open on every read: the manual window's continuous force
+        # sampler calls this ~10x/second, and re-running the broken open each time
+        # spammed errors and eventually crashed pythonnet (the IList<Device> marshal
+        # crash). Stay in simulated force until the app restarts or _close_futek()
+        # clears the flag (e.g. an explicit reconnect).
+        return None
     try:
         import futek_cli
         real_ok = getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
@@ -145,19 +154,25 @@ def _open_futek():
               "plugged in and detected? Falling back to simulated force.")
         traceback.print_exc()
         _FUTEK_CACHE = None
+        # Remember the failure so we stop retrying the broken open on every read (above).
+        _FUTEK_FAILED = True
+        print("[futek]   not retrying the real load cell this session - restart the app "
+              "(or reconnect) to try again.")
     return _FUTEK_CACHE
 
 
 def _close_futek():
     # drop the cached FUTEK (after a read failure / disconnect, or on shutdown) so
     # the next _open_futek re-detects the device.
-    global _FUTEK_CACHE
+    global _FUTEK_CACHE, _FUTEK_FAILED
     if _FUTEK_CACHE is not None:
         try:
             _FUTEK_CACHE.stop(); _FUTEK_CACHE.exit()
         except Exception:
             pass
         _FUTEK_CACHE = None
+    # clear the failure latch too, so an explicit reconnect/close re-attempts the open.
+    _FUTEK_FAILED = False
 
 
 class RunEngine:

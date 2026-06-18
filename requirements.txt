@@ -6,7 +6,10 @@ xlsxwriter
 pyserial
 zaber-motion
 matplotlib
-pythonnet
+# Pinned: newer pythonnet builds fail to marshal the FUTEK .NET IList<Device> that
+# DetectDevices() returns ("Failed to create Python type for ... IList<Device>"), which
+# crashes the load-cell open. 3.0.3 is a known-good version for the FUTEK.Devices driver.
+pythonnet==3.0.3
 pywebview
 
 # pyinstaller is only needed to build the double-clickable desktop app, not to run it.

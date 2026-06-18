@@ -137,26 +137,61 @@ if _REAL_FUTEK_AVAILABLE:
             # find the connected futek device, usually the usb225.
             devices = self.oFUTEKDeviceRepoDLL.DetectDevices()
             self.USB225 = devices[0] if devices else None
+            if self.USB225 is None:
+                raise RuntimeError(
+                    "No FUTEK device detected on USB. Plug in the load cell and confirm "
+                    "the FUTEK USB driver is installed.")
 
-            self.ModelNumber = FUTEK.Devices.Device.GetModelNumber(self.USB225)
-            print(f"Model Number: {self.ModelNumber}")
-
-            self.SerialNumber = FUTEK.Devices.Device.GetInstrumentSerialNumber(self.USB225)
-            print(f"Serial Number: {self.SerialNumber}")
-
-            self.UnitCode = FUTEK.Devices.DeviceUSB225.GetChannelXUnitOfMeasure(self.USB225, 0)
-            print(f"Unit of Measure: {self.UnitCode}")
-
-            self.OpenedConnection = True
-
-            self.SamplingRate = FUTEK.Devices.DeviceUSB225.GetChannelXSamplingRate(self.USB225, 0)
+            # Model / serial / unit / rate are INFORMATIONAL only - the force reading at
+            # the end is what the test actually uses. Some FUTEK.Devices builds expose
+            # model/serial as INSTANCE methods rather than the static Device.GetX(device)
+            # form, which throws "No method matches given arguments" / "non-static method
+            # with an invalid instance". So read each one defensively (trying the instance
+            # form as a fallback) and never let a metadata-call mismatch stop the load cell
+            # from opening for readings.
+            self.ModelNumber = self._read_meta(
+                "model number",
+                lambda: FUTEK.Devices.Device.GetModelNumber(self.USB225),
+                lambda: self.USB225.GetModelNumber())
+            self.SerialNumber = self._read_meta(
+                "serial number",
+                lambda: FUTEK.Devices.Device.GetInstrumentSerialNumber(self.USB225),
+                lambda: self.USB225.GetInstrumentSerialNumber())
+            self.UnitCode = self._read_meta(
+                "unit of measure",
+                lambda: FUTEK.Devices.DeviceUSB225.GetChannelXUnitOfMeasure(self.USB225, 0),
+                default=0)
             # available sampling rates: ['2.5','5','10','16.6','20','50','60','100','400','1200','2400','4800']
-            print(f"Sampling Rate: {self.SamplingRate} Hz")
+            self.SamplingRate = self._read_meta(
+                "sampling rate",
+                lambda: FUTEK.Devices.DeviceUSB225.GetChannelXSamplingRate(self.USB225, 0),
+                default="100")
             # set a steady sampling rate for the python test loop.
-            self.USB225.SetChannelXSamplingRate(0, "100")
+            try:
+                self.USB225.SetChannelXSamplingRate(0, "100")
+            except Exception as e:
+                print(f"[futek] could not set sampling rate (using device default): {e}")
 
+            # THE REAL GATE: if force cannot be read, this is not a working load cell -
+            # let the exception propagate so the caller falls back to simulated force
+            # instead of reporting a dead device as connected.
             self.NormalData = FUTEK.Devices.DeviceUSB225.GetChannelXReading(self.USB225, 0)
             print(f"Sensor Reading: {self.NormalData:.3f}")
+            self.OpenedConnection = True
+
+        def _read_meta(self, label, *getters, default=None):
+            # informational device property: try each call form in turn, and on total
+            # failure log and return the default so opening never hinges on metadata.
+            last = None
+            for getter in getters:
+                try:
+                    value = getter()
+                    print(f"FUTEK {label}: {value}")
+                    return value
+                except Exception as exc:
+                    last = exc
+            print(f"[futek] could not read {label} ({last}); continuing - force readings still work.")
+            return default
 
         def getNormalData(self):
             # Raw SIGNED reading. Two load cells are in use - one reads positive
