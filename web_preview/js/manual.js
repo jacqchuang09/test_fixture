@@ -118,7 +118,7 @@
         document.getElementById("manualControlStack").classList.toggle("force-mode", isForceMode);
         document.getElementById("manualDistanceModeButton").classList.toggle("active", !isForceMode);
         document.getElementById("manualForceModeButton").classList.toggle("active", isForceMode);
-        document.getElementById("manualReleaseButton").textContent = isForceMode ? "↑ Release" : "↑ MOVE UP";
+        document.getElementById("manualReleaseButton").textContent = isForceMode ? "↑ Decompress" : "↑ MOVE UP";
         document.getElementById("manualCompressionButton").textContent = isForceMode ? "↓ Start Compression" : "↓ MOVE DOWN";
         document.getElementById("manualHomeButton").textContent = isForceMode ? "↻ Home" : "↻ HOME";
         document.getElementById("manualDragCard").classList.toggle("disabled", isForceMode);
@@ -130,7 +130,7 @@
           document.getElementById("manualDragReadout").textContent = `selected position: ${manualPendingPosition.toFixed(1)} mm. travel from baseline: ${(manualPendingPosition - 17).toFixed(1)} mm.`;
         }
         if (!locked) {
-          setManualState("READY", isForceMode ? "force control selected. start compression moves to target force; release backs force toward 0 N." : "distance control selected. move buttons use increment distance.");
+          setManualState("READY", isForceMode ? "force control selected. Compress drives down to the target force; Decompress drives up to it." : "distance control selected. move buttons use increment distance.");
         }
       }
 
@@ -273,7 +273,7 @@
           return;
         }
         const mode = result.simulated ? "simulated" : "real";
-        setManualState("READY", `${description} complete (${mode}). ${Number(result.force || 0).toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
+        setManualState("READY", `${result.message || (description + " complete")} (${mode})`);
       }
 
       function manualTestMove(direction) {
@@ -285,7 +285,7 @@
           if (direction === "down") {
             recordManualForceMove(targetForce, "down", `compress to ${targetForce.toFixed(2)} N`);
           } else {
-            recordManualForceMove(0, "up", "release toward 0 N");
+            recordManualForceMove(targetForce, "up", `decompress to ${targetForce.toFixed(2)} N`);
           }
           return;
         }

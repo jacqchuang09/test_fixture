@@ -164,6 +164,11 @@ class RunEngine:
     def __init__(self):
         self._lock = threading.Lock()
         self._thread = None
+        # the load cell's resting (uncompressed) raw reading, captured when the actuator
+        # is at home. Manual force moves measure ABSOLUTE force as abs(raw - baseline) so
+        # compression and decompression share one reference (a per-move tare would read 0
+        # at the start of a decompress and stop it instantly). None until first captured.
+        self._manual_baseline = None
         self.reset_live()
 
     def reset_live(self):
@@ -427,11 +432,13 @@ class RunEngine:
             STATE._move_loop_active = False
 
     def manual_force_move(self, target_force, direction="down", speed=None):
-        # Force-feedback jog: drive the actuator at the actuator speed and STOP when the
-        # load cell reads the target force. "down" compresses toward the sensor until
-        # force >= target; "up" releases until force drops to ~0 (or the actuator is
-        # back at home). The same safety net as the press applies - force ceiling, a
-        # metal-contact spike, the travel limit, and a comms loss all stop it.
+        # Force-feedback jog driven at the actuator speed:
+        #   down = COMPRESS, move toward the sensor until force RISES to the target.
+        #   up   = DECOMPRESS, move away from the sensor until force FALLS to the target.
+        # It only moves in the direction that brings force toward the target: compression
+        # never moves up, decompression never moves down. Force is ABSOLUTE (abs(raw -
+        # resting baseline)), so both directions compare against the same reference. The
+        # press safety net applies: force ceiling, metal spike, travel limit, comms loss.
         target_force = abs(float(target_force))
         going_down = (direction != "up")
         axis = STATE.axis
@@ -442,15 +449,32 @@ class RunEngine:
         futek = _open_futek()
         simulated = (axis is None) or (futek is None)
         jog_speed = max(0.01, min(abs(float(speed)) if speed else 2.0, 25.0))
+        # capture the resting (uncompressed) baseline when at home; otherwise reuse the
+        # last one so absolute force is consistent across a compress/decompress sequence.
+        raw_now = self._read_force(futek, 0.0)
+        if self._manual_baseline is None or abs(STATE.position_mm - HOME_MM) < 0.1:
+            self._manual_baseline = raw_now
+        baseline = self._manual_baseline
+        current_force = abs(raw_now - baseline)
         print(f"[manual force] target={target_force:.2f} N  dir={direction}  speed={jog_speed:.3f} mm/s  "
-              f"simulated={simulated}  load_cell={_futek_kind(futek)}")
+              f"current={current_force:.2f} N  simulated={simulated}  load_cell={_futek_kind(futek)}")
+        # only move in the direction that brings force toward the target.
+        if going_down and current_force >= target_force:
+            msg = f"Already at {current_force:.2f} N (>= target {target_force:.2f} N). Compression does not move up."
+            print(f"[manual force] no move - {msg}")
+            self._set(status="completed", position=STATE.position_mm, force=current_force, message=msg)
+            return {"ok": True, "position": STATE.position_mm, "force": current_force, "simulated": simulated, "message": msg}
+        if (not going_down) and current_force <= target_force:
+            msg = f"Already at {current_force:.2f} N (<= target {target_force:.2f} N). Decompression does not move down."
+            print(f"[manual force] no move - {msg}")
+            self._set(status="completed", position=STATE.position_mm, force=current_force, message=msg)
+            return {"ok": True, "position": STATE.position_mm, "force": current_force, "simulated": simulated, "message": msg}
         t0 = time.time()
         trace = []
-        init_force = None
-        force = 0.0
-        prev_force = None
+        force = current_force
+        prev_force = current_force
         spike_limit = self._spike_limit(jog_speed * JOG_POLL_DT)
-        self._set(status="running", simulated=simulated, force=0.0, position=STATE.position_mm,
+        self._set(status="running", simulated=simulated, force=current_force, position=STATE.position_mm,
                   elapsed=0.0, samples=0, trace=[], message="")
         STATE._move_loop_active = True
         try:
@@ -492,10 +516,9 @@ class RunEngine:
                             "message": "Actuator connection lost during the move."}
                 depth = max(0.0, STATE.position_mm - HOME_MM)
                 f = self._read_force(futek, depth)
-                if init_force is None:
-                    init_force = f
-                # tare to the start-of-move baseline, then magnitude (either polarity).
-                force = abs(f - init_force)
+                # ABSOLUTE force vs the resting baseline (positive for either polarity),
+                # so compression and decompression share one reference.
+                force = abs(f - baseline)
                 t = time.time() - t0
                 trace.append([round(t, 4), round(force, 4)])
                 self._set(force=force, position=STATE.position_mm, elapsed=t, samples=len(trace), trace=list(trace))
@@ -519,19 +542,22 @@ class RunEngine:
                     return {"ok": True, "position": STATE.position_mm, "force": force,
                             "stopped_for_safety": True, "simulated": simulated,
                             "message": "Actuator reached its travel limit before the target force."}
-                # reached the target force (compression) or released back to ~0 / home.
+                # compression: stop once force has RISEN to the target.
                 if going_down and force >= target_force:
                     self._stop_axis(axis)
                     break
-                if (not going_down) and (force <= target_force + 0.05 or STATE.position_mm <= HOME_MM + 0.02):
+                # decompression: stop once force has FALLEN to the target, or the
+                # actuator is back at home (the floor - it cannot retract further).
+                if (not going_down) and (force <= target_force or STATE.position_mm <= HOME_MM + 0.02):
                     self._stop_axis(axis)
                     break
                 time.sleep(SAMPLE_DT)
-            print(f"[manual force] reached {force:.2f} N at {STATE.position_mm:.2f} mm")
-            self._set(status="completed", position=STATE.position_mm, force=force, trace=list(trace),
-                      message=f"Reached {force:.2f} N at {STATE.position_mm:.2f} mm.")
+            verb = "Compressed" if going_down else "Decompressed"
+            msg = f"{verb} to {force:.2f} N at {STATE.position_mm:.2f} mm."
+            print(f"[manual force] done - {msg}")
+            self._set(status="completed", position=STATE.position_mm, force=force, trace=list(trace), message=msg)
             return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,
-                    "message": f"Reached {force:.2f} N at {STATE.position_mm:.2f} mm."}
+                    "message": msg}
         except Exception as exc:
             self._stop_axis(axis)
             self._set(status="error", position=STATE.position_mm, message=f"Manual force move failed: {exc}")
