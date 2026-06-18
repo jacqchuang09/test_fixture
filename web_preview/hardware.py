@@ -15,42 +15,16 @@ from zaber_cli import ZaberCLI  # importable: config.py puts the repo root on sy
 HOME_MM = 17.0
 
 
-# Zaber's USB-serial adapter reports "Zaber Technologies" in its FTDI EEPROM
-# (manufacturer/description); some units enumerate under Zaber's own USB vendor id.
-# Either signal flags the port as the Zaber so the UI can auto-pick it.
-_ZABER_USB_VIDS = {0x2939}
-
-
 def list_ports():
-    # enumerate serial ports with enough USB metadata to guess which one is the Zaber.
-    # Returns a list of dicts: {device, description, is_zaber}.
+    # enumerate serial ports the same way emilio's comport combobox did.
     try:
         import serial.tools.list_ports
     except ImportError:
         return []
     try:
-        raw = list(serial.tools.list_ports.comports())
+        return [port.device for port in serial.tools.list_ports.comports()]
     except Exception:
         return []
-    ports = []
-    for p in raw:
-        # one weird port must never hide the rest, so guard per-port and fall back to
-        # just the device name if the USB metadata can't be read.
-        try:
-            text = " ".join(
-                str(x) for x in (p.manufacturer, p.description, getattr(p, "product", None), p.hwid) if x
-            ).lower()
-            is_zaber = ("zaber" in text) or (getattr(p, "vid", None) in _ZABER_USB_VIDS)
-            description = (p.description or "").strip()
-            if description.lower() in ("n/a", "", "unknown"):
-                description = ""
-            ports.append({"device": p.device, "description": description, "is_zaber": is_zaber})
-        except Exception:
-            try:
-                ports.append({"device": str(p.device), "description": "", "is_zaber": False})
-            except Exception:
-                pass
-    return ports
 
 
 def _mm_unit():

@@ -894,12 +894,7 @@
         if (!select) return;
         const previous = select.value;
         const result = await callApi("/api/list-ports");
-        // prefer the rich metadata (port_info); fall back to plain device strings.
-        const ports = ((result && result.port_info) ||
-          ((result && result.ports) || []).map((d) =>
-            typeof d === "string" ? { device: d, description: "", is_zaber: false } : d))
-          .filter((p) => p && p.device);
-        const deviceList = ports.map((p) => p.device);
+        const ports = (result && result.ports) || [];
         select.innerHTML = "";
         // placeholder first: the user must actively pick a port (no default).
         const placeholder = document.createElement("option");
@@ -908,20 +903,15 @@
         select.appendChild(placeholder);
         ports.forEach((port) => {
           const option = document.createElement("option");
-          option.value = port.device;
-          // label with the Zaber hint (or the device description) so it's obvious.
-          option.textContent = port.is_zaber
-            ? `${port.device}: Zaber`
-            : (port.description ? `${port.device}: ${port.description}` : port.device);
+          option.value = port;
+          option.textContent = port;
           select.appendChild(option);
         });
         // keep a prior real selection if it still exists; otherwise show placeholder.
-        // The Zaber port is LABELLED ("COMx - Zaber") so the operator can pick it, but
-        // it is never auto-selected or auto-connected.
-        select.value = (previous && deviceList.includes(previous)) ? previous : "";
+        select.value = (previous && ports.includes(previous)) ? previous : "";
         updateComPortPlaceholder();
         updateFolderInfoTag();
-        // do NOT auto-connect - only connect once the user picks a port.
+        // do NOT auto-connect on load - only connect once the user picks a port.
       }
 
       // gray out the dropdown while it shows the "Select COM port" placeholder.
@@ -1073,9 +1063,6 @@
       manualTestModal.addEventListener("cancel", (event) => {
         if (isManualMoving()) event.preventDefault();
       });
-      // stop the continuous force sampler when the manual window closes (no point
-      // polling the load cell when the operator is not looking at the graph).
-      manualTestModal.addEventListener("close", stopManualSampling);
 
       // On the Windows rig, default the save folder to the operator's Downloads.
       // The value baked into index.html is only the Mac dev default; this runs at
