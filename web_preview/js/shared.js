@@ -322,15 +322,16 @@
               if (p.pct > lastReal) lastReal = p.pct;
               if (p.message) copy.textContent = p.message;
             }
-            // glide toward the latest real milestone, and creep a little past it
-            // (capped at 95) so a long phase still shows gentle motion, never freezing
-            // and never reaching 100 until the work actually returns.
-            const ceiling = Math.min(95, lastReal + 20);
+            // glide toward the latest real milestone with a small lead so motion stays
+            // smooth between updates, never freezing and never reaching 100 until the
+            // work actually returns. The pipeline reports ~14 real points, so this
+            // mostly just smooths the gaps.
+            const ceiling = Math.min(96, lastReal + 8);
             if (shown < ceiling) {
-              shown = Math.min(ceiling, shown + Math.max(0.4, (ceiling - shown) * 0.1));
+              shown = Math.min(ceiling, shown + Math.max(0.4, (ceiling - shown) * 0.18));
               fill.style.width = `${shown}%`;
             }
-            await new Promise((resolve) => setTimeout(resolve, 150));
+            await new Promise((resolve) => setTimeout(resolve, 120));
           }
         };
         poll();
@@ -338,11 +339,13 @@
         try {
           const result = await Promise.resolve().then(work);
           polling = false;
-          // the bar tracked the real phases, so on completion snap it straight to
-          // 100% (no animation) and show the results immediately - no artificial wait.
+          // the bar tracked the real phases the whole way (it is near the top by now),
+          // so snap to 100% and show it for a brief moment so it visibly completes,
+          // then reveal the results. 120 ms is a completion flash, not a wait.
           fill.style.transition = "none";
           fill.style.width = "100%";
           copy.textContent = "Analysis outputs ready.";
+          await new Promise((resolve) => setTimeout(resolve, 120));
           modal.close();
           return result;
         } catch (error) {

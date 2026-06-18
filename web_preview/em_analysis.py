@@ -62,7 +62,7 @@ def _run_sort_key(path):
 
 
 class EMAnalysis:
-    def __init__(self, test_folder, sensor_id, sensor_type="Standard", surface_area_mm2=325.0, active_runs=None):
+    def __init__(self, test_folder, sensor_id, sensor_type="Standard", surface_area_mm2=325.0, active_runs=None, progress=None):
         """
         Parameters:
             test_folder: folder containing the FUT/ and CAP/ run subfolders
@@ -72,7 +72,10 @@ class EMAnalysis:
             active_runs: optional list of run numbers to analyze (the latest run in
                 each supersession chain). When given, superseded/redone runs are
                 excluded. When None, every run file is used.
+            progress: optional callable(frac, message) reporting 0..1 pipeline progress
+                (plotting dominates the runtime, so this drives the loading bar).
         """
+        self._progress = progress if callable(progress) else (lambda frac, message="": None)
         self.sensor_id = sensor_id
         self.path = Path(test_folder)
         self.sensor_type = sensor_type
@@ -157,12 +160,15 @@ class EMAnalysis:
         self.max_kPa_numeric = np.zeros((self.cap_size, self.ch))
         self.inf_CAP_numeric = np.zeros((self.cap_size, self.ch))
 
-        # Run the pipeline.
+        # Run the pipeline. _synch_and_plot and _derive_and_plot report per-run inside.
+        self._progress(0.05, "Interpolating CAP and force to 200 Hz…")
         self._interp_cap()
         self._synch_and_plot()
         self._derive_and_plot()
+        self._progress(0.82, "Rendering channel plots…")
         self._plot_all_chs_across_runs()
         self._plot_all_runs_across_chs()
+        self._progress(0.9, "Finalizing analysis…")
 
     # -- data loading -------------------------------------------------------
 
@@ -243,6 +249,7 @@ class EMAnalysis:
         temp_run = copy.deepcopy(self.run)
 
         for i in range(self.cap_size):
+            self._progress(0.10 + 0.38 * (i / max(1, self.cap_size)), f"Syncing & plotting run {i + 1}/{self.cap_size}…")
             # The max CAP corresponds to when the FUTEK released pressure (inflection).
             temp_max_cap = np.nanmax(temp_run[i][0], axis=0)
             self.shorted_ch = np.where(temp_max_cap > 10)[0]  # >10 pF change = shorted
@@ -331,6 +338,7 @@ class EMAnalysis:
 
     def _derive_and_plot(self):
         for i in range(self.cap_size):
+            self._progress(0.48 + 0.34 * (i / max(1, self.cap_size)), f"Building P.S curves run {i + 1}/{self.cap_size}…")
             fig = plt.figure(figsize=(20, 10))
 
             zaber_x_i = None
@@ -707,7 +715,7 @@ def _to_jsonable(value):
     return value
 
 
-def run_em_analysis(test_folder, sensor_id, sensor_type="Standard", surface_area_mm2=325.0, active_runs=None):
+def run_em_analysis(test_folder, sensor_id, sensor_type="Standard", surface_area_mm2=325.0, active_runs=None, progress=None):
     """
     Convenience entry point: run the full pipeline, persist outputs, and return a
     summary dict the web app can consume.
@@ -717,9 +725,15 @@ def run_em_analysis(test_folder, sensor_id, sensor_type="Standard", surface_area
         shorted_channels: list of 1-based shorted channel numbers
         runs: number of runs analysed
         result: the JSON-safe full result dictionary
+
+    progress: optional callable(frac, message) reporting 0..1 pipeline progress.
     """
-    analyzer = EMAnalysis(test_folder, sensor_id, sensor_type, surface_area_mm2, active_runs=active_runs)
+    report = progress if callable(progress) else (lambda frac, message="": None)
+    analyzer = EMAnalysis(test_folder, sensor_id, sensor_type, surface_area_mm2,
+                          active_runs=active_runs, progress=progress)
+    report(0.93, "Saving results…")
     result = analyzer.save_data()
+    report(0.98, "Packaging plot data…")
 
     def _col(name):
         return np.asarray(result[name], dtype=float)

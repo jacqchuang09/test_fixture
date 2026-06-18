@@ -92,7 +92,7 @@ class SavedTestAnalyzer:
             cap_runs = {run: pts for run, pts in cap_runs.items() if run in keep}
         self._fut_runs = fut_runs   # kept so Manual can rebuild points from files
         self._cap_runs = cap_runs
-        set_analysis_progress(30, "Aligning and building readings…")
+        set_analysis_progress(20, "Aligning and building readings…")
         readings = self._build_readings(fut_runs)
 
         test_type = str(self.payload.get("test_type") or "EM")
@@ -111,7 +111,7 @@ class SavedTestAnalyzer:
             # a single run and hiding the others. Otherwise fall back to preview,
             # which renders all active runs from the FUT data.
             if fut_runs and set(fut_runs.keys()) == set(cap_runs.keys()):
-                set_analysis_progress(45, "Running the analysis pipeline…")
+                set_analysis_progress(25, "Running the analysis pipeline…")
                 em_summary = self._run_real_em()
             elif fut_runs:
                 # EM analysis requires a capacitance file for every active run. The
@@ -131,7 +131,7 @@ class SavedTestAnalyzer:
         self._remove_stale_outputs()
         self._remove_superseded_run_outputs()
 
-        set_analysis_progress(70, "Writing tables and plots…")
+        set_analysis_progress(88, "Writing tables and plots…")
         if test_type == "Shear":
             outputs = self._write_shear_layout(readings, channel_stats, report_output)
         elif test_type == "Manual":
@@ -139,7 +139,7 @@ class SavedTestAnalyzer:
         else:
             outputs = self._write_em_layout(readings, channel_stats, cap_runs, report_output, em_summary)
 
-        set_analysis_progress(90, "Building interactive plots…")
+        set_analysis_progress(95, "Building interactive plots…")
         # the only extra written for every test type: a self-contained interactive
         # (Plotly) plot of the real data - zoom, pan, hover, annotate, PNG export.
         interactive_html_path = self.analysis_folder / "Analysis_Plots.html"
@@ -288,12 +288,17 @@ class SavedTestAnalyzer:
             traceback.print_exc()
             return None
         try:
+            # the pipeline (plotting) is the long part; map its 0..1 progress onto the
+            # 25..85% band so the loading bar climbs the whole time, not just at the end.
+            def _cb(frac, message=""):
+                set_analysis_progress(25 + frac * 60, message or "Running the analysis pipeline…")
             return run_em_analysis(
                 self.test_folder,
                 self.sensor_id,
                 self.sensor_type,
                 self.surface_area,
                 active_runs=self._active_runs(),
+                progress=_cb,
             )
         except Exception as exc:
             # any data/format issue (e.g. preview data that never reaches test
