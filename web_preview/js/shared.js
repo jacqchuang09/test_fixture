@@ -260,9 +260,9 @@
 
       // Run a /api/move call but never let the UI hang: if it doesn't return within
       // `ms`, resolve a timeout result so the caller's finally unlocks the controls.
-      function moveApiWithTimeout(payload, successMessage, ms = 30000) {
+      function moveApiWithTimeout(payload, successMessage, ms = 30000, endpoint = "/api/move") {
         return Promise.race([
-          callApi("/api/move", payload, successMessage),
+          callApi(endpoint, payload, successMessage),
           new Promise((resolve) => setTimeout(() => resolve({
             ok: false, timeout: true,
             message: "Move timed out - controls unlocked. Check the actuator and try again.",

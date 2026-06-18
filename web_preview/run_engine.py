@@ -426,6 +426,119 @@ class RunEngine:
         finally:
             STATE._move_loop_active = False
 
+    def manual_force_move(self, target_force, direction="down", speed=None):
+        # Force-feedback jog: drive the actuator at the actuator speed and STOP when the
+        # load cell reads the target force. "down" compresses toward the sensor until
+        # force >= target; "up" releases until force drops to ~0 (or the actuator is
+        # back at home). The same safety net as the press applies - force ceiling, a
+        # metal-contact spike, the travel limit, and a comms loss all stop it.
+        target_force = abs(float(target_force))
+        going_down = (direction != "up")
+        axis = STATE.axis
+        STATE.stop_requested = False
+        self._set(status="waiting", simulated=(axis is None), force=0.0, position=STATE.position_mm,
+                  elapsed=0.0, samples=0, trace=[], disconnect=False, safety_stop=False,
+                  message="initializing load cell - please wait")
+        futek = _open_futek()
+        simulated = (axis is None) or (futek is None)
+        jog_speed = max(0.01, min(abs(float(speed)) if speed else 2.0, 25.0))
+        print(f"[manual force] target={target_force:.2f} N  dir={direction}  speed={jog_speed:.3f} mm/s  "
+              f"simulated={simulated}  load_cell={_futek_kind(futek)}")
+        t0 = time.time()
+        trace = []
+        init_force = None
+        force = 0.0
+        prev_force = None
+        spike_limit = self._spike_limit(jog_speed * JOG_POLL_DT)
+        self._set(status="running", simulated=simulated, force=0.0, position=STATE.position_mm,
+                  elapsed=0.0, samples=0, trace=[], message="")
+        STATE._move_loop_active = True
+        try:
+            if axis is not None:
+                from zaber_motion import Units
+                try:
+                    axis.move_velocity(jog_speed if going_down else -jog_speed,
+                                       Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                except Exception as exc:
+                    STATE.comms_lost = True
+                    self._set(status="error", disconnect=True, position=STATE.position_mm,
+                              message=f"Manual force move failed: {exc}")
+                    return {"ok": False, "position": STATE.position_mm, "disconnect": True,
+                            "message": f"Manual force move failed: {exc}"}
+            # bound the search so a target that is never reached cannot run forever.
+            deadline = time.time() + 120.0
+            while True:
+                if STATE.stop_requested:
+                    self._stop_axis(axis)
+                    self._set(status="stopped", position=STATE.position_mm, force=force,
+                              message="Manual force move stopped.")
+                    return {"ok": True, "position": STATE.position_mm, "force": force, "stopped": True,
+                            "simulated": simulated, "message": "Manual force move stopped."}
+                if time.time() > deadline:
+                    self._stop_axis(axis)
+                    msg = f"Force target not reached within the time limit (stopped at {force:.2f} N)."
+                    self._set(status="stopped", position=STATE.position_mm, force=force, message=msg)
+                    return {"ok": True, "position": STATE.position_mm, "force": force, "stopped": True,
+                            "simulated": simulated, "message": msg}
+                if axis is None:
+                    STATE.position_mm += (jog_speed if going_down else -jog_speed) * SAMPLE_DT
+                else:
+                    STATE._read_position()
+                if STATE.comms_lost:
+                    self._stop_axis(axis)
+                    self._set(status="error", disconnect=True, position=STATE.position_mm,
+                              message="Actuator connection lost during the move.")
+                    return {"ok": False, "position": STATE.position_mm, "disconnect": True,
+                            "message": "Actuator connection lost during the move."}
+                depth = max(0.0, STATE.position_mm - HOME_MM)
+                f = self._read_force(futek, depth)
+                if init_force is None:
+                    init_force = f
+                # tare to the start-of-move baseline, then magnitude (either polarity).
+                force = abs(f - init_force)
+                t = time.time() - t0
+                trace.append([round(t, 4), round(force, 4)])
+                self._set(force=force, position=STATE.position_mm, elapsed=t, samples=len(trace), trace=list(trace))
+                # safety: over-force ceiling or a sudden metal-contact spike.
+                if force > FORCE_CEILING_N or (prev_force is not None and abs(force - prev_force) > spike_limit):
+                    self._stop_axis(axis)
+                    msg = (f"Force limit reached ({force:.1f} N). Manual move stopped for safety "
+                           f"at {STATE.position_mm:.2f} mm.")
+                    self._set(status="error", safety_stop=True, position=STATE.position_mm, force=force, message=msg)
+                    return {"ok": True, "position": STATE.position_mm, "force": force,
+                            "stopped_for_safety": True, "simulated": simulated, "message": msg}
+                prev_force = force
+                # never drive into the actuator's mechanical end stop. This is
+                # DIRECTIONAL: compression starts at the 17 mm home (the travel minimum)
+                # and moves toward the 50.8 mm maximum, so only the max end is a limit
+                # when going down. (A non-directional check would false-trip at home.)
+                if going_down and STATE.position_mm >= ZABER_TRAVEL_MAX_MM - TRAVEL_MARGIN_MM:
+                    self._stop_axis(axis)
+                    self._set(status="error", safety_stop=True, position=STATE.position_mm,
+                              message="Actuator reached its travel limit before the target force. Move stopped for safety.")
+                    return {"ok": True, "position": STATE.position_mm, "force": force,
+                            "stopped_for_safety": True, "simulated": simulated,
+                            "message": "Actuator reached its travel limit before the target force."}
+                # reached the target force (compression) or released back to ~0 / home.
+                if going_down and force >= target_force:
+                    self._stop_axis(axis)
+                    break
+                if (not going_down) and (force <= target_force + 0.05 or STATE.position_mm <= HOME_MM + 0.02):
+                    self._stop_axis(axis)
+                    break
+                time.sleep(SAMPLE_DT)
+            print(f"[manual force] reached {force:.2f} N at {STATE.position_mm:.2f} mm")
+            self._set(status="completed", position=STATE.position_mm, force=force, trace=list(trace),
+                      message=f"Reached {force:.2f} N at {STATE.position_mm:.2f} mm.")
+            return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,
+                    "message": f"Reached {force:.2f} N at {STATE.position_mm:.2f} mm."}
+        except Exception as exc:
+            self._stop_axis(axis)
+            self._set(status="error", position=STATE.position_mm, message=f"Manual force move failed: {exc}")
+            return {"ok": False, "position": STATE.position_mm, "message": f"Manual force move failed: {exc}"}
+        finally:
+            STATE._move_loop_active = False
+
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
         futek = _open_futek()             # None when the FUTEK is simulated

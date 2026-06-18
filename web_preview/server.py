@@ -156,6 +156,15 @@ class Handler(SimpleHTTPRequestHandler):
             from run_engine import ENGINE
             return ENGINE.manual_move(float(payload.get("distance", 0)), payload.get("speed"))
 
+        if path == "/api/move-to-force":
+            # force-feedback jog: drive the actuator at the actuator speed until the load
+            # cell reads the target force (compression), or release back toward 0 N / home.
+            from run_engine import ENGINE
+            return ENGINE.manual_force_move(
+                float(payload.get("target_force", 0)),
+                payload.get("direction", "down"),
+                payload.get("speed"))
+
         if path == "/api/home":
             return STATE.home(comport)
 

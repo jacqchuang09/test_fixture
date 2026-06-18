@@ -208,17 +208,85 @@
         setManualState("READY", `move complete (${mode}). position ${manualPosition.toFixed(2)} mm.`);
       }
 
+      // Force-feedback move: drive the actuator at the actuator speed until the load
+      // cell reads the target force (down = compress to target, up = release toward 0).
+      // The backend runs the feedback loop and streams live force; this locks the
+      // controls and polls /api/run-status the same way the distance move does.
+      async function recordManualForceMove(targetForce, direction, description) {
+        if (isManualMoving()) return;
+        setManualControlsLocked(true);
+        document.getElementById("manualConfirmDragButton").disabled = true;
+        setManualState("WAITING TO START", "initializing load cell - please wait…");
+        const t0 = performance.now();
+        let moveDone = false;
+        let lastStatus = "";
+        console.log(`[manual force] START "${description}"  target=${targetForce.toFixed(2)} N  dir=${direction}`);
+        manualMotionTimer = setInterval(async () => {
+          if (moveDone) return;
+          const status = await callApi("/api/run-status");
+          if (moveDone) return;
+          if (!status || !status.ok) return;
+          if (status.status !== lastStatus) {
+            console.log(`[manual force] status -> ${status.status}  force=${Number(status.force || 0).toFixed(2)} N  pos=${Number(status.position || 0).toFixed(2)} mm  simulated=${status.simulated}`);
+            lastStatus = status.status;
+          }
+          if (status.status === "waiting") {
+            setManualState("WAITING TO START", "initializing load cell - please wait…");
+            return;
+          }
+          const force = Number(status.force || 0);
+          if (typeof status.position === "number") {
+            manualPosition = status.position;
+            manualPendingPosition = manualPosition;
+            document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
+            document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+          }
+          const time = (performance.now() - t0) / 1000;
+          manualData.push({ time, force, capacitance: 12 + force * 0.32 });
+          drawManualGraphs();
+          const motion = status.simulated ? "simulated motion" : "actuator moving";
+          setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
+        }, 100);
+
+        // force search can take longer than a fixed jog, so allow more time than the
+        // default; the backend has its own 120 s safety deadline.
+        const result = await moveApiWithTimeout(
+          { target_force: targetForce, direction, speed: manualActuatorSpeed() }, null, 130000, "/api/move-to-force");
+        moveDone = true;
+        console.log(`[manual force] /api/move-to-force returned after ${Math.round(performance.now() - t0)} ms`, result);
+        if (manualMotionTimer) { clearInterval(manualMotionTimer); manualMotionTimer = null; }
+        if (result && typeof result.position === "number") {
+          manualPosition = result.position;
+          manualPendingPosition = manualPosition;
+          document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
+          document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+        }
+        setManualControlsLocked(false);
+        document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
+        if (result && result.stopped_for_safety) {
+          setManualState("PAUSED", result.message || "Force limit reached. Manual move stopped for safety.");
+          return;
+        }
+        if (!result || result.ok === false || result.disconnect) {
+          if (result && result.disconnect) showDisconnectDialog(result.message);
+          setManualState("ERROR", (result && result.message) || "Manual force move failed.");
+          return;
+        }
+        const mode = result.simulated ? "simulated" : "real";
+        setManualState("READY", `${description} complete (${mode}). ${Number(result.force || 0).toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
+      }
+
       function manualTestMove(direction) {
         if (isManualMoving()) return;
         if (manualControlMode() === "force") {
           const targetForceInput = document.getElementById("manualTargetForce");
           const targetForce = clampForce(targetForceInput.value);
           targetForceInput.value = targetForce;
-          const currentForce = manualData.length ? manualData[manualData.length - 1].force : 0;
-          const nextForce = direction === "down" ? targetForce : 0;
-          const forceDelta = nextForce - currentForce;
-          const distance = forceDelta / 4.5;
-          recordManualMove(distance, direction === "down" ? `start compression to ${nextForce.toFixed(2)} N` : "release toward 0 N");
+          if (direction === "down") {
+            recordManualForceMove(targetForce, "down", `compress to ${targetForce.toFixed(2)} N`);
+          } else {
+            recordManualForceMove(0, "up", "release toward 0 N");
+          }
           return;
         }
         const incrementInput = document.getElementById("manualIncrementDistance");
