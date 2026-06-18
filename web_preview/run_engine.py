@@ -278,7 +278,23 @@ class RunEngine:
             STATE.position_mm = HOME_MM + distance
             return
         try:
-            axis.move_relative(distance, _mm_unit(), wait_until_idle=True)
+            # Drive the approach non-blocking and poll, instead of one blocking
+            # wait_until_idle move, so a Stop or Pause pressed DURING the approach
+            # takes effect right away. The old blocking move ignored both flags until
+            # the actuator finished arriving (~5.5 s for the gap move at 2 mm/s), which
+            # is why Pause "didn't trigger right away" while the fixture was still
+            # moving toward the sensor. On a stop/pause we halt here and return; the
+            # caller's run loop then runs its own pause/stop handling (home + status).
+            axis.move_relative(distance, _mm_unit(), wait_until_idle=False)
+            deadline = time.time() + 60.0
+            while axis.is_busy():
+                if STATE.stop_requested or STATE.pause_requested:
+                    self._stop_axis(axis)
+                    break
+                if time.time() > deadline:
+                    self._stop_axis(axis)
+                    break
+                time.sleep(SAMPLE_DT)
             STATE._read_position()
         except Exception:
             STATE.comms_lost = True
@@ -567,6 +583,28 @@ class RunEngine:
             return {"ok": False, "position": STATE.position_mm, "message": f"Manual force move failed: {exc}"}
         finally:
             STATE._move_loop_active = False
+
+    def read_force_now(self):
+        # Read the load cell RIGHT NOW for the manual window's continuous live graph,
+        # without moving anything. Lets the Force/Cap vs Time plots keep advancing while
+        # the actuator is idle. During a move the move loop already streams force, so we
+        # just hand back the live value (no second device read on another thread).
+        if self.is_running():
+            with self._lock:
+                return {"ok": True, "force": self.live.get("force", 0.0),
+                        "position": self.live.get("position", STATE.position_mm),
+                        "simulated": self.live.get("simulated", True)}
+        if os.environ.get("FORCE_SIM"):
+            return {"ok": True, "force": 0.0, "position": STATE.position_mm, "simulated": True}
+        futek = _open_futek()
+        raw = self._read_force(futek, 0.0)
+        # absolute force vs the resting baseline (captured at home), same reference the
+        # manual force moves use, so the idle reading lines up with the move readings.
+        if self._manual_baseline is None or abs(STATE.position_mm - HOME_MM) < 0.1:
+            self._manual_baseline = raw
+        force = abs(raw - self._manual_baseline)
+        return {"ok": True, "force": round(force, 4), "position": round(STATE.position_mm, 4),
+                "simulated": (STATE.axis is None) or (futek is None)}
 
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
@@ -964,9 +1002,13 @@ class RunEngine:
         t0 = time.time()
         idx = 0
         prev_force = None
-        # spike threshold scales with the waveform's own max per-sample step so a
-        # fast sine never false-trips; a real spike is far larger than this.
-        spike_threshold = max(SPIKE_FLOOR_N, 5.0 * amp * 2.0 * math.pi * frequency * SAMPLE_DT)
+        # A spike means the force jumped FAR more than this waveform can legitimately
+        # command in one 100 Hz step. The biggest legitimate step is the full
+        # lower->upper swing (a square wave's edge), so allow that plus a noise margin.
+        # Real over-force is still caught by FORCE_CEILING_N and the travel limit. The
+        # old threshold assumed a clean sine and false-tripped on square waves, on real
+        # load-cell noise, and on the actuator's discrete catch-up moves.
+        spike_threshold = max(SPIKE_FLOOR_N, abs(upper - lower) + 5.0)
 
         def record(force_value, cycle):
             nonlocal idx, prev_force
