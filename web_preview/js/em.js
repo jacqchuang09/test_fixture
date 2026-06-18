@@ -1428,6 +1428,27 @@
         // adopt the real computed curves when the python engine returned them.
         emPlotData = (analysis && analysis.em_plots && Array.isArray(analysis.em_plots.runs) && analysis.em_plots.runs.length)
           ? analysis.em_plots : null;
+        // make a preview/synthesized fallback OBVIOUS instead of silently showing
+        // fake-looking plots. engine === "real" means the actual pipeline ran.
+        const emEngine = analysis && analysis.engine;
+        const emReason = (analysis && analysis.engine_reason) || "unknown";
+        if (emEngine === "preview") {
+          console.warn(`[em analysis] PREVIEW (synthesized) plots shown - the real pipeline did NOT run. Reason: ${emReason}`);
+        } else {
+          console.log(`[em analysis] engine = ${emEngine || "?"} (real pipeline output)`);
+        }
+        const banner = document.getElementById("emEngineBanner");
+        if (banner) {
+          if (emEngine === "preview") {
+            banner.className = "alert";
+            banner.style.cssText = "background:#fff5f7;border:1px solid var(--red);color:#a32d2d;margin-bottom:12px;text-align:left;";
+            banner.textContent = "These are PREVIEW (synthesized) plots, not real analysis - "
+              + ((analysis && analysis.engine_reason) || "the real pipeline did not run on this data.");
+          } else {
+            banner.className = "hidden";
+            banner.textContent = "";
+          }
+        }
         // adopt the real matplotlib PNG figures when present (preferred display).
         emImages = (analysis && analysis.em_images) ? analysis.em_images : null;
         // adopt the real per-channel stats (from the CAP files) for the Summary

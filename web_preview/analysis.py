@@ -23,6 +23,8 @@ class SavedTestAnalyzer:
     def __init__(self, payload, test_folder):
         self.payload = payload
         self.test_folder = Path(test_folder).expanduser()
+        # why the real EM pipeline fell back to the synthesized preview, if it did.
+        self._em_fallback_reason = None
         # prefer the configuration recorded at test time (test_meta.json) so a saved
         # test re-analyzes with the same sensor + channel order, not the current UI
         # selection. Fall back to the payload, then sensible defaults.
@@ -129,10 +131,14 @@ class SavedTestAnalyzer:
             }
 
         engine = "real" if em_summary is not None else "preview"
-        engine_note = (
-            " Real EM analysis pipeline used (inflection detection on smoothed P.S curves)."
-            if em_summary is not None else ""
-        )
+        if em_summary is not None:
+            engine_note = " Real EM analysis pipeline used (inflection detection on smoothed P.S curves)."
+        elif test_type not in ("Shear", "Manual"):
+            # an EM analysis that fell back to synthesized preview - say so loudly.
+            why = self._em_fallback_reason or "the real pipeline did not run on this data."
+            engine_note = f" WARNING: showing PREVIEW (synthesized) plots, not real analysis - {why}"
+        else:
+            engine_note = ""
         message = (
             f"Analysis completed for {self.sensor_id}. Read {len(fut_files)} FUT file(s) "
             f"and {len(cap_files)} CAP file(s). Outputs saved to {self.analysis_folder}.{engine_note}"
@@ -145,6 +151,7 @@ class SavedTestAnalyzer:
                 "sensor_id": self.sensor_id,
                 "test_type": test_type,
                 "engine": engine,
+                "engine_reason": self._em_fallback_reason,
                 "shorted_channels": em_summary.get("shorted_channels", []) if em_summary else [],
                 "em_plots": em_summary.get("plots") if em_summary else None,
                 "em_images": outputs.get("em_images") if isinstance(outputs, dict) else None,
@@ -240,12 +247,17 @@ class SavedTestAnalyzer:
         # on success, or None if the scientific stack is missing or the run files
         # are not suitable (e.g. preview data that never reaches 45 kPa). Imported
         # lazily so the rest of the app still works without numpy/scipy/matplotlib.
+        # On failure it records WHY in self._em_fallback_reason so the UI can show it
+        # instead of silently plotting the synthesized preview.
+        import sys, traceback
         try:
             from em_analysis import run_em_analysis
         except Exception as exc:
-            # scientific stack unavailable -> use the preview analysis.
-            import sys
+            self._em_fallback_reason = (
+                f"the analysis library could not load ({type(exc).__name__}: {exc}). "
+                "Install numpy, scipy, pandas, and matplotlib (pip install -r requirements.txt).")
             print(f"[em-analysis] unavailable, using preview analysis: {exc}", file=sys.stderr)
+            traceback.print_exc()
             return None
         try:
             return run_em_analysis(
@@ -257,9 +269,10 @@ class SavedTestAnalyzer:
             )
         except Exception as exc:
             # any data/format issue (e.g. preview data that never reaches test
-            # pressure) -> fall back to the preview analysis.
-            import sys
+            # pressure, or a CAP/FUT file that won't parse) -> preview fallback.
+            self._em_fallback_reason = f"the real pipeline errored on this data ({type(exc).__name__}: {exc})."
             print(f"[em-analysis] preview fallback: {exc}", file=sys.stderr)
+            traceback.print_exc()
             return None
 
     def _run_fatigue_analysis(self):
