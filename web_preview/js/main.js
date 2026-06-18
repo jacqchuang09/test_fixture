@@ -894,7 +894,11 @@
         if (!select) return;
         const previous = select.value;
         const result = await callApi("/api/list-ports");
-        const ports = (result && result.ports) || [];
+        // ports are [{device, description, is_zaber}]; tolerate the old string form.
+        const ports = ((result && result.ports) || []).map((p) =>
+          typeof p === "string" ? { device: p, description: "", is_zaber: false } : p);
+        const deviceList = ports.map((p) => p.device);
+        const zaberPort = (result && result.zaber_port) || (ports.find((p) => p.is_zaber) || {}).device || "";
         select.innerHTML = "";
         // placeholder first: the user must actively pick a port (no default).
         const placeholder = document.createElement("option");
@@ -903,15 +907,30 @@
         select.appendChild(placeholder);
         ports.forEach((port) => {
           const option = document.createElement("option");
-          option.value = port;
-          option.textContent = port;
+          option.value = port.device;
+          // label with the Zaber hint (or the device description) so it's obvious.
+          option.textContent = port.is_zaber
+            ? `${port.device} — Zaber`
+            : (port.description ? `${port.device} — ${port.description}` : port.device);
           select.appendChild(option);
         });
-        // keep a prior real selection if it still exists; otherwise show placeholder.
-        select.value = (previous && ports.includes(previous)) ? previous : "";
+        // keep a prior real selection if it still exists; else auto-pick the detected
+        // Zaber port; else show the placeholder.
+        let autoConnectZaber = false;
+        if (previous && deviceList.includes(previous)) {
+          select.value = previous;
+        } else if (zaberPort) {
+          select.value = zaberPort;       // auto-pick the detected Zaber
+          autoConnectZaber = true;
+        } else {
+          select.value = "";
+        }
         updateComPortPlaceholder();
         updateFolderInfoTag();
-        // do NOT auto-connect on load - only connect once the user picks a port.
+        // Auto-connect ONLY to a confidently detected Zaber. Connecting just opens the
+        // serial port and reads position (it does not move the actuator), so this is
+        // safe; unknown ports are never auto-connected - the operator picks those.
+        if (autoConnectZaber) connectComPort(true);
       }
 
       // gray out the dropdown while it shows the "Select COM port" placeholder.
@@ -1063,6 +1082,9 @@
       manualTestModal.addEventListener("cancel", (event) => {
         if (isManualMoving()) event.preventDefault();
       });
+      // stop the continuous force sampler when the manual window closes (no point
+      // polling the load cell when the operator is not looking at the graph).
+      manualTestModal.addEventListener("close", stopManualSampling);
 
       // On the Windows rig, default the save folder to the operator's Downloads.
       // The value baked into index.html is only the Mac dev default; this runs at

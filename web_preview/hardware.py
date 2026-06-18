@@ -15,14 +15,35 @@ from zaber_cli import ZaberCLI  # importable: config.py puts the repo root on sy
 HOME_MM = 17.0
 
 
+# Zaber's USB-serial adapter reports "Zaber Technologies" in its FTDI EEPROM
+# (manufacturer/description); some units enumerate under Zaber's own USB vendor id.
+# Either signal flags the port as the Zaber so the UI can auto-pick it.
+_ZABER_USB_VIDS = {0x2939}
+
+
 def list_ports():
-    # enumerate serial ports the same way emilio's comport combobox did.
+    # enumerate serial ports with enough USB metadata to guess which one is the Zaber.
+    # Returns a list of dicts: {device, description, is_zaber}.
     try:
         import serial.tools.list_ports
     except ImportError:
         return []
     try:
-        return [port.device for port in serial.tools.list_ports.comports()]
+        ports = []
+        for p in serial.tools.list_ports.comports():
+            text = " ".join(
+                str(x) for x in (p.manufacturer, p.description, getattr(p, "product", None), p.hwid) if x
+            ).lower()
+            is_zaber = ("zaber" in text) or (getattr(p, "vid", None) in _ZABER_USB_VIDS)
+            description = (p.description or "").strip()
+            if description.lower() in ("n/a", "", "unknown"):
+                description = ""
+            ports.append({
+                "device": p.device,
+                "description": description,
+                "is_zaber": is_zaber,
+            })
+        return ports
     except Exception:
         return []
 

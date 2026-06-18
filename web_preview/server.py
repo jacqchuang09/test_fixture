@@ -116,12 +116,18 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/list-ports":
             ports = list_ports()
+            zaber = next((p["device"] for p in ports if p.get("is_zaber")), None)
+            if zaber:
+                message = f"Detected {len(ports)} serial port(s). Zaber looks like {zaber}."
+            elif ports:
+                message = f"Detected {len(ports)} serial port(s). Could not identify the Zaber - pick the port manually."
+            else:
+                message = "No serial ports detected."
             return {
                 "ok": True,
-                "ports": ports,
-                "message": (
-                    f"Detected {len(ports)} serial port(s)." if ports else "No serial ports detected."
-                ),
+                "ports": ports,            # [{device, description, is_zaber}]
+                "zaber_port": zaber,       # best guess, or None
+                "message": message,
             }
 
         if path == "/api/connect":
