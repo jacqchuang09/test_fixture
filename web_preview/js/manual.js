@@ -32,6 +32,8 @@
           manualMotionTimer = null;
         }
         manualData = [];
+        manualClockStart = performance.now();   // continuous clock for Force/Cap vs Time
+        manualLiveForce = 0;
         manualPosition = 17;
         manualPendingPosition = 17;
         manualStatusLines = [];
@@ -45,6 +47,36 @@
         setManualState("READY", "manual controls ready. baseline position is 17 mm.");
         addManualPoint(0, 0);
         drawManualGraphs();
+        startManualSampling();
+      }
+
+      // Continuous recording: while the manual window is open, sample force on a steady
+      // ~10 Hz clock so Force/Cap vs Time keep advancing even when the actuator is idle.
+      // During a move the move loop streams the live force into manualLiveForce; when
+      // idle we read the load cell directly. One clock (manualClockStart) timestamps all
+      // points so time never resets between moves.
+      function startManualSampling() {
+        stopManualSampling();
+        manualSampleTimer = setInterval(async () => {
+          if (!isManualMoving()) {
+            const r = await callApi("/api/read-force", {});
+            if (r && r.ok) {
+              manualLiveForce = Number(r.force || 0);
+              if (typeof r.position === "number") manualPosition = r.position;
+            }
+          }
+          const t = (performance.now() - manualClockStart) / 1000;
+          // Record load-cell force only. The manual window has no capacitance sensor,
+          // so capacitance is left null (NOT a fabricated value) - the cap graphs show
+          // an explicit empty state instead of plotting placeholder numbers.
+          manualData.push({ time: t, force: manualLiveForce, capacitance: null });
+          if (manualData.length > 36000) manualData.splice(0, manualData.length - 36000);  // ~1 hr cap
+          drawManualGraphs();
+        }, 100);
+      }
+
+      function stopManualSampling() {
+        if (manualSampleTimer) { clearInterval(manualSampleTimer); manualSampleTimer = null; }
       }
 
       function manualActuatorSpeed() {
@@ -170,15 +202,13 @@
             return;
           }
           const force = Number(status.force || 0);
+          manualLiveForce = force;   // the continuous sampler records the graph point
           if (typeof status.position === "number") {
             manualPosition = status.position;
             manualPendingPosition = manualPosition;
             document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
             document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
           }
-          const time = (performance.now() - t0) / 1000;
-          manualData.push({ time, force, capacitance: 12 + force * 0.32 });
-          drawManualGraphs();
           const motion = status.simulated ? "simulated motion" : "actuator moving";
           setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
         }, 100);
@@ -235,15 +265,13 @@
             return;
           }
           const force = Number(status.force || 0);
+          manualLiveForce = force;   // the continuous sampler records the graph point
           if (typeof status.position === "number") {
             manualPosition = status.position;
             manualPendingPosition = manualPosition;
             document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
             document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
           }
-          const time = (performance.now() - t0) / 1000;
-          manualData.push({ time, force, capacitance: 12 + force * 0.32 });
-          drawManualGraphs();
           const motion = status.simulated ? "simulated motion" : "actuator moving";
           setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
         }, 100);
@@ -333,7 +361,24 @@
       }
 
       function addManualPoint(force, time) {
-        manualData.push({ time, force, capacitance: 12 + force * 0.32 });
+        // no capacitance sensor in the manual window - leave it null (see startManualSampling).
+        manualData.push({ time, force, capacitance: null });
+      }
+
+      // Empty-state for the capacitance graphs: the manual window records force only,
+      // so the two cap graphs render a centered "no data" note instead of a fake line.
+      function drawManualCapPlaceholder(svgId) {
+        const graph = document.getElementById(svgId);
+        if (!graph) return;
+        const viewBox = graph.viewBox?.baseVal;
+        const width = viewBox?.width || 420;
+        const height = viewBox?.height || 260;
+        graph.innerHTML = `
+          <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>
+          <text x="${width / 2}" y="${height / 2 - 6}" text-anchor="middle" fill="#9aa6b8" font-size="14" font-family="Inter, sans-serif">No capacitance data</text>
+          <text x="${width / 2}" y="${height / 2 + 14}" text-anchor="middle" fill="#b4bdcc" font-size="11" font-family="Inter, sans-serif">manual window records force only</text>
+        `;
+        if (typeof setGraphHoverPoints === "function") setGraphHoverPoints(svgId, []);
       }
 
       function manualGraphSettings() {
@@ -361,12 +406,15 @@
         const latest = manualData.length ? manualData[manualData.length - 1].time : 0;
         const startTime = settings.cumulativeTime ? 0 : Math.max(0, latest - settings.seconds);
         let visible = manualData.filter((point) => point.time >= startTime);
-        // before any data exists, seed a reasonable starting view (force ~0-5 N,
-        // capacitance around its resting value) so the empty graphs open sensibly.
-        if (!visible.length) visible = [{ time: 0, force: 0, capacitance: 12 }];
-        drawMiniGraph("manualCapForceGraph", visible, "force", "capacitance", "Force (N)", "Capacitance", settings);
+        // before any data exists, seed a reasonable starting view (force ~0-5 N) so the
+        // empty Force vs Time graph opens sensibly.
+        if (!visible.length) visible = [{ time: 0, force: 0 }];
+        // Force vs Time is the only live graph - the manual window records load-cell
+        // force continuously from the moment it opens. There is no capacitance sensor,
+        // so the two capacitance graphs show an explicit empty state, never fake data.
         drawMiniGraph("manualForceTimeGraph", visible, "time", "force", "Time (s)", "Force (N)", settings);
-        drawMiniGraph("manualCapTimeGraph", visible, "time", "capacitance", "Time (s)", "Capacitance", settings);
+        drawManualCapPlaceholder("manualCapForceGraph");
+        drawManualCapPlaceholder("manualCapTimeGraph");
       }
 
       async function performManualAnalysis() {
@@ -418,9 +466,11 @@
         const visibleSpan = fullSpan / manualAnalysisZoom;
         const startTime = Math.max(first, latest - visibleSpan);
         const visible = manualData.filter((point) => point.time >= startTime);
-        drawMiniGraph("manualAnalysisCapForceGraph", visible, "force", "capacitance", "Force (N)", "Capacitance", settings);
+        // Force vs Time is the only real manual measurement; the capacitance tabs show
+        // the same empty state as the live window (no capacitance sensor here).
         drawMiniGraph("manualAnalysisForceTimeGraph", visible, "time", "force", "Time (s)", "Force (N)", settings);
-        drawMiniGraph("manualAnalysisCapTimeGraph", visible, "time", "capacitance", "Time (s)", "Capacitance", settings);
+        drawManualCapPlaceholder("manualAnalysisCapForceGraph");
+        drawManualCapPlaceholder("manualAnalysisCapTimeGraph");
         showAnalysisTab("manual", activeTab);
       }
 
