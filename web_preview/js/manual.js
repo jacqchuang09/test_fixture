@@ -92,6 +92,12 @@
       }
 
       function setManualControlsLocked(isLocked) {
+        // NOTE: the graph-display controls (Last Seconds, Y-Axis Min/Limit, Show Markers,
+        // Cumulative Time) are deliberately NOT in this list - they only change how the
+        // live graph is drawn, never the actuator or the test, so they stay editable
+        // during a move. The continuous sampler redraws every ~100 ms, so a change to any
+        // of them takes effect on the next frame even mid-move. Only controls that command
+        // motion (or would queue a conflicting command) are locked while moving.
         [
           "manualTestCloseButton",
           "manualControlMode",
@@ -105,11 +111,6 @@
           "manualHomeButton",
           "manualDragPosition",
           "manualConfirmDragButton",
-          "manualSecondsToDisplay",
-          "manualYAxisMin",
-          "manualYAxisLimit",
-          "manualShowMarkers",
-          "manualCumulativeTime",
           "manualAnalysisButton",
         ].forEach((id) => {
           const element = document.getElementById(id);
