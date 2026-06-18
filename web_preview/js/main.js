@@ -898,7 +898,6 @@
         const ports = ((result && result.ports) || []).map((p) =>
           typeof p === "string" ? { device: p, description: "", is_zaber: false } : p);
         const deviceList = ports.map((p) => p.device);
-        const zaberPort = (result && result.zaber_port) || (ports.find((p) => p.is_zaber) || {}).device || "";
         select.innerHTML = "";
         // placeholder first: the user must actively pick a port (no default).
         const placeholder = document.createElement("option");
@@ -914,23 +913,13 @@
             : (port.description ? `${port.device} — ${port.description}` : port.device);
           select.appendChild(option);
         });
-        // keep a prior real selection if it still exists; else auto-pick the detected
-        // Zaber port; else show the placeholder.
-        let autoConnectZaber = false;
-        if (previous && deviceList.includes(previous)) {
-          select.value = previous;
-        } else if (zaberPort) {
-          select.value = zaberPort;       // auto-pick the detected Zaber
-          autoConnectZaber = true;
-        } else {
-          select.value = "";
-        }
+        // keep a prior real selection if it still exists; otherwise show placeholder.
+        // The Zaber port is LABELLED ("COMx - Zaber") so the operator can pick it, but
+        // it is never auto-selected or auto-connected.
+        select.value = (previous && deviceList.includes(previous)) ? previous : "";
         updateComPortPlaceholder();
         updateFolderInfoTag();
-        // Auto-connect ONLY to a confidently detected Zaber. Connecting just opens the
-        // serial port and reads position (it does not move the actuator), so this is
-        // safe; unknown ports are never auto-connected - the operator picks those.
-        if (autoConnectZaber) connectComPort(true);
+        // do NOT auto-connect - only connect once the user picks a port.
       }
 
       // gray out the dropdown while it shows the "Select COM port" placeholder.
