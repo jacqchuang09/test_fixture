@@ -29,8 +29,14 @@ def list_ports():
     except ImportError:
         return []
     try:
-        ports = []
-        for p in serial.tools.list_ports.comports():
+        raw = list(serial.tools.list_ports.comports())
+    except Exception:
+        return []
+    ports = []
+    for p in raw:
+        # one weird port must never hide the rest, so guard per-port and fall back to
+        # just the device name if the USB metadata can't be read.
+        try:
             text = " ".join(
                 str(x) for x in (p.manufacturer, p.description, getattr(p, "product", None), p.hwid) if x
             ).lower()
@@ -38,14 +44,13 @@ def list_ports():
             description = (p.description or "").strip()
             if description.lower() in ("n/a", "", "unknown"):
                 description = ""
-            ports.append({
-                "device": p.device,
-                "description": description,
-                "is_zaber": is_zaber,
-            })
-        return ports
-    except Exception:
-        return []
+            ports.append({"device": p.device, "description": description, "is_zaber": is_zaber})
+        except Exception:
+            try:
+                ports.append({"device": str(p.device), "description": "", "is_zaber": False})
+            except Exception:
+                pass
+    return ports
 
 
 def _mm_unit():

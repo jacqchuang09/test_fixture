@@ -894,9 +894,11 @@
         if (!select) return;
         const previous = select.value;
         const result = await callApi("/api/list-ports");
-        // ports are [{device, description, is_zaber}]; tolerate the old string form.
-        const ports = ((result && result.ports) || []).map((p) =>
-          typeof p === "string" ? { device: p, description: "", is_zaber: false } : p);
+        // prefer the rich metadata (port_info); fall back to plain device strings.
+        const ports = ((result && result.port_info) ||
+          ((result && result.ports) || []).map((d) =>
+            typeof d === "string" ? { device: d, description: "", is_zaber: false } : d))
+          .filter((p) => p && p.device);
         const deviceList = ports.map((p) => p.device);
         select.innerHTML = "";
         // placeholder first: the user must actively pick a port (no default).

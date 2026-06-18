@@ -115,17 +115,19 @@ class Handler(SimpleHTTPRequestHandler):
             return self.browse_folder()
 
         if path == "/api/list-ports":
-            ports = list_ports()
-            zaber = next((p["device"] for p in ports if p.get("is_zaber")), None)
+            info = list_ports()                          # [{device, description, is_zaber}]
+            devices = [p["device"] for p in info]
+            zaber = next((p["device"] for p in info if p.get("is_zaber")), None)
             if zaber:
-                message = f"Detected {len(ports)} serial port(s). Zaber looks like {zaber}."
-            elif ports:
-                message = f"Detected {len(ports)} serial port(s). Could not identify the Zaber - pick the port manually."
+                message = f"Detected {len(devices)} serial port(s). Zaber looks like {zaber}."
+            elif devices:
+                message = f"Detected {len(devices)} serial port(s). Could not identify the Zaber - pick the port manually."
             else:
                 message = "No serial ports detected."
             return {
                 "ok": True,
-                "ports": ports,            # [{device, description, is_zaber}]
+                "ports": devices,          # plain device strings (back-compat with older UI)
+                "port_info": info,         # rich metadata for the labelled dropdown
                 "zaber_port": zaber,       # best guess, or None
                 "message": message,
             }
