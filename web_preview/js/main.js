@@ -909,8 +909,8 @@
           option.value = port.device;
           // label with the Zaber hint (or the device description) so it's obvious.
           option.textContent = port.is_zaber
-            ? `${port.device} — Zaber`
-            : (port.description ? `${port.device} — ${port.description}` : port.device);
+            ? `${port.device}: Zaber`
+            : (port.description ? `${port.device}: ${port.description}` : port.device);
           select.appendChild(option);
         });
         // keep a prior real selection if it still exists; otherwise show placeholder.
