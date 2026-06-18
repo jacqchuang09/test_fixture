@@ -156,6 +156,12 @@ class Handler(SimpleHTTPRequestHandler):
             from run_engine import ENGINE
             return ENGINE.manual_move(float(payload.get("distance", 0)), payload.get("speed"))
 
+        if path == "/api/read-force":
+            # current load-cell reading for the manual window's continuous live graph
+            # (no motion). Used while the actuator is idle so time keeps advancing.
+            from run_engine import ENGINE
+            return ENGINE.read_force_now()
+
         if path == "/api/move-to-force":
             # force-feedback jog: drive the actuator at the actuator speed until the load
             # cell reads the target force (compression), or release back toward 0 N / home.
@@ -184,6 +190,11 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/perform-analysis":
             return self.perform_analysis(payload)
+
+        if path == "/api/analysis-progress":
+            # live phase progress for the loading bar (polled while analysis runs).
+            from analysis import get_analysis_progress
+            return {"ok": True, **get_analysis_progress()}
 
         if path == "/api/analyze-sample":
             # TEMP: run a bundled real sample dataset (EM or Shear) through the full
@@ -696,8 +707,13 @@ class Handler(SimpleHTTPRequestHandler):
         else:
             self.prepare_test_folder(payload, test_folder)
 
+        from analysis import reset_analysis_progress, set_analysis_progress
+        reset_analysis_progress()
         analyzer = SavedTestAnalyzer(payload, test_folder)
-        return analyzer.run()
+        try:
+            return analyzer.run()
+        finally:
+            set_analysis_progress(100, "Analysis complete.")
 
     def browse_folder(self):
         # open a native folder picker. In the packaged desktop app this uses the

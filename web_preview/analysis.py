@@ -7,6 +7,7 @@ import json
 import math
 import re
 import statistics
+import threading
 import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -14,6 +15,28 @@ from pathlib import Path
 from config import ROOT
 from hardware import load_cell_force
 
+
+# live analysis progress, updated as the analyzer works through its phases and read
+# by /api/analysis-progress so the loading bar reflects real state (not a fake timer).
+_PROGRESS_LOCK = threading.Lock()
+_ANALYSIS_PROGRESS = {"pct": 0, "message": "", "done": False}
+
+
+def set_analysis_progress(pct, message):
+    with _PROGRESS_LOCK:
+        _ANALYSIS_PROGRESS["pct"] = int(pct)
+        _ANALYSIS_PROGRESS["message"] = message
+        _ANALYSIS_PROGRESS["done"] = pct >= 100
+
+
+def reset_analysis_progress():
+    with _PROGRESS_LOCK:
+        _ANALYSIS_PROGRESS.update({"pct": 0, "message": "starting analysis…", "done": False})
+
+
+def get_analysis_progress():
+    with _PROGRESS_LOCK:
+        return dict(_ANALYSIS_PROGRESS)
 
 
 class SavedTestAnalyzer:
@@ -53,6 +76,7 @@ class SavedTestAnalyzer:
         # writes plots/tables, then returns a summary object back to the browser.
         if str(self.payload.get("test_type") or "EM") == "Fatigue":
             return self._run_fatigue_analysis()
+        set_analysis_progress(10, "Reading FUT and CAP files…")
         fut_files = self._find_files("FUT", "*.xlsx") + self._find_files("FUT", "*.csv")
         cap_files = self._find_files("CAP", "*.csv")
         self.analysis_folder.mkdir(parents=True, exist_ok=True)
@@ -68,6 +92,7 @@ class SavedTestAnalyzer:
             cap_runs = {run: pts for run, pts in cap_runs.items() if run in keep}
         self._fut_runs = fut_runs   # kept so Manual can rebuild points from files
         self._cap_runs = cap_runs
+        set_analysis_progress(30, "Aligning and building readings…")
         readings = self._build_readings(fut_runs)
 
         test_type = str(self.payload.get("test_type") or "EM")
@@ -86,6 +111,7 @@ class SavedTestAnalyzer:
             # a single run and hiding the others. Otherwise fall back to preview,
             # which renders all active runs from the FUT data.
             if fut_runs and set(fut_runs.keys()) == set(cap_runs.keys()):
+                set_analysis_progress(45, "Running the analysis pipeline…")
                 em_summary = self._run_real_em()
             elif fut_runs:
                 # EM analysis requires a capacitance file for every active run. The
@@ -105,6 +131,7 @@ class SavedTestAnalyzer:
         self._remove_stale_outputs()
         self._remove_superseded_run_outputs()
 
+        set_analysis_progress(70, "Writing tables and plots…")
         if test_type == "Shear":
             outputs = self._write_shear_layout(readings, channel_stats, report_output)
         elif test_type == "Manual":
@@ -112,6 +139,7 @@ class SavedTestAnalyzer:
         else:
             outputs = self._write_em_layout(readings, channel_stats, cap_runs, report_output, em_summary)
 
+        set_analysis_progress(90, "Building interactive plots…")
         # the only extra written for every test type: a self-contained interactive
         # (Plotly) plot of the real data - zoom, pan, hover, annotate, PNG export.
         interactive_html_path = self.analysis_folder / "Analysis_Plots.html"

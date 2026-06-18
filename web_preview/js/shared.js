@@ -106,6 +106,12 @@
       let manualStatusLines = [];
       let manualAnalysisZoom = 1;
       let manualMotionTimer = null;
+      // continuous manual recording: one clock that keeps running the whole time the
+      // window is open (so Force/Cap vs Time advance even when the actuator is idle),
+      // the latest force reading, and the background sampler timer.
+      let manualClockStart = 0;
+      let manualLiveForce = 0;
+      let manualSampleTimer = null;
       let cyclicalData = [];
       let cyclicalTimer = null;
       let cyclicalReturnHomeTimer = null;
@@ -295,30 +301,50 @@
         const fill = document.getElementById("analysisProgressFill");
         const copy = document.getElementById("analysisProgressCopy");
         document.getElementById("analysisProgressTitle").textContent = title;
-        fill.style.width = "8%";
-        copy.textContent = "Working - reading FUT and CAP files, generating plots and stats…";
+        // CSS transition does the smoothing: the bar glides to each new value instead
+        // of stepping. (Set here so it applies even if the stylesheet is cached.)
+        fill.style.transition = "width 0.4s ease-out";
+        fill.style.width = "5%";
+        copy.textContent = "Starting analysis…";
         modal.showModal();
 
-        // The backend analysis is one call with no sub-progress to report, so the
-        // bar is indeterminate: it creeps while the REAL work runs and jumps to
-        // 100% the instant it actually finishes - it reflects real start and real
-        // completion, with no artificial minimum delay.
-        let progress = 8;
-        const progressTimer = setInterval(() => {
-          progress = Math.min(90, progress + 3);
-          fill.style.width = `${progress}%`;
-        }, 200);
+        // Poll the backend for REAL phase progress (reading files -> aligning ->
+        // running the pipeline -> writing plots) and glide the bar to each reported
+        // value. The width never moves backward and is held just under 100% until the
+        // work actually returns, so the bar reflects real state, not a fixed timer.
+        let shown = 5;
+        let lastReal = 5;
+        let polling = true;
+        const poll = async () => {
+          while (polling) {
+            const p = await callApi("/api/analysis-progress");
+            if (polling && p && p.ok && typeof p.pct === "number") {
+              if (p.pct > lastReal) lastReal = p.pct;
+              if (p.message) copy.textContent = p.message;
+            }
+            // glide toward the latest real milestone, and creep a little past it
+            // (capped at 95) so a long phase still shows gentle motion, never freezing
+            // and never reaching 100 until the work actually returns.
+            const ceiling = Math.min(95, lastReal + 20);
+            if (shown < ceiling) {
+              shown = Math.min(ceiling, shown + Math.max(0.4, (ceiling - shown) * 0.1));
+              fill.style.width = `${shown}%`;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 150));
+          }
+        };
+        poll();
 
         try {
           const result = await Promise.resolve().then(work);
-          clearInterval(progressTimer);
+          polling = false;
           fill.style.width = "100%";
           copy.textContent = "Analysis outputs ready.";
-          await new Promise((resolve) => setTimeout(resolve, 180));
+          await new Promise((resolve) => setTimeout(resolve, 250));
           modal.close();
           return result;
         } catch (error) {
-          clearInterval(progressTimer);
+          polling = false;
           modal.close();
           throw error;
         }
