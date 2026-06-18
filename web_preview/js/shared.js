@@ -338,11 +338,11 @@
         try {
           const result = await Promise.resolve().then(work);
           polling = false;
+          // the bar tracked the real phases, so on completion snap it straight to
+          // 100% (no animation) and show the results immediately - no artificial wait.
+          fill.style.transition = "none";
           fill.style.width = "100%";
           copy.textContent = "Analysis outputs ready.";
-          // wait for the 0.4s fill transition to finish so the bar visibly reaches
-          // 100% before the modal closes and the results appear.
-          await new Promise((resolve) => setTimeout(resolve, 550));
           modal.close();
           return result;
         } catch (error) {
