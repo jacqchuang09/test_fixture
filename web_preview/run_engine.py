@@ -98,6 +98,10 @@ class ZaberDisconnect(Exception):
 # (disconnect) so the next operation re-detects it.
 _FUTEK_CACHE = None
 _FUTEK_FAILED = False   # True after a real load-cell open fails, so we stop retrying it every read
+# The .NET FUTEK driver is NOT thread-safe. Every real getNormalData() read is taken
+# under this lock so the idle sampler, a move loop, and any overlapping HTTP requests
+# can never hit the device at the same time (concurrent reads corrupt the driver).
+_FUTEK_READ_LOCK = threading.Lock()
 
 
 def _futek_kind(dev):
@@ -254,7 +258,9 @@ class RunEngine:
                 # baseline (force - init_force) and then take the magnitude, which
                 # gives a positive compression force for a load cell of EITHER
                 # polarity. Abs is applied to the tared change, not here.
-                return futek.getNormalData() * LBF_TO_N
+                # Serialized: the .NET driver is not thread-safe (see _FUTEK_READ_LOCK).
+                with _FUTEK_READ_LOCK:
+                    return futek.getNormalData() * LBF_TO_N
             except Exception:
                 # a transient read failure: return 0 but KEEP the cached device open.
                 # (Re-detecting it costs ~12 s; a real disconnect is caught by the
@@ -604,7 +610,17 @@ class RunEngine:
         # without moving anything. Lets the Force/Cap vs Time plots keep advancing while
         # the actuator is idle. During a move the move loop already streams force, so we
         # just hand back the live value (no second device read on another thread).
-        if self.is_running():
+        #
+        # CRITICAL: the .NET FUTEK driver is NOT thread-safe. This runs on the HTTP
+        # request thread; a move loop runs on its own thread (background-thread runs)
+        # OR synchronously on another request thread (manual jog / force compression).
+        # is_running() only catches the background-thread runs, so we ALSO gate on
+        # _move_loop_active to catch manual moves. Without this, the manual window's
+        # 10 Hz sampler read the device at the same time as a manual compression read it,
+        # and the two concurrent reads corrupted the driver - the load cell dropped to
+        # simulated and stayed there. While any move loop owns the device, hand back the
+        # force it is already streaming instead of opening a second read on this thread.
+        if self.is_running() or STATE._move_loop_active:
             with self._lock:
                 return {"ok": True, "force": self.live.get("force", 0.0),
                         "position": self.live.get("position", STATE.position_mm),
