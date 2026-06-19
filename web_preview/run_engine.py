@@ -91,92 +91,151 @@ class ZaberDisconnect(Exception):
     """Raised inside a run loop when the live Zaber stops responding (comms lost)."""
 
 
-# The live FUTEK device is CACHED. Opening it (the .NET driver detects the USB
-# device and reads its config) takes many seconds; the old code reopened it on
-# every move, which was the ~13-14 s delay before each jog started. We open it
-# once and reuse it for every move/run; it is dropped only on a read failure
-# (disconnect) so the next operation re-detects it.
-_FUTEK_CACHE = None
-_FUTEK_FAILED = False   # True after a real load-cell open fails, so we stop retrying it every read
-# The .NET FUTEK driver is NOT thread-safe. Every real getNormalData() read is taken
-# under this lock so the idle sampler, a move loop, and any overlapping HTTP requests
-# can never hit the device at the same time (concurrent reads corrupt the driver).
-_FUTEK_READ_LOCK = threading.Lock()
+# --- Single-owner load cell reader -------------------------------------------
+# The FUTEK is a single device that does NOT tolerate being read from more than one
+# place at a time. Concurrent reads, or reads from different threads, corrupt the .NET
+# driver and drop the load cell to simulated for the rest of the session. The manual
+# window made this happen constantly: its live graph read force ~10x/second WHILE a
+# compression read it too, so two reads collided and killed the device.
+#
+# The fix is structural: exactly ONE background thread owns the device. It opens it
+# once (on its own thread - also avoiding any .NET thread-affinity issue) and reads it
+# ~100 Hz into a shared 'latest raw' value. Every consumer - the manual live graph,
+# every compression/jog, EM, Shear, Fuji, Fatigue - reads that cached value and NEVER
+# touches the driver. One writer, many readers, so two simultaneous device accesses are
+# impossible, in every window and every test.
+class _FutekReader:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._device = None        # open FUTEK (real on Windows, mock on Mac) or None
+        self._latest_raw = None    # most recent raw signed reading; holds the last good value
+        self._kind = "NONE"
+        self._started = False
+        self._failed = False       # open failed (or FORCE_SIM) -> simulated this session
+        self._stop = False
+
+    def ensure_started(self):
+        # Open the device and start the owner thread on first force need. Non-blocking:
+        # readiness is observed via latest_raw() / wait_ready(), so callers that poll
+        # (the idle graph sampler) never block on the multi-second device open.
+        with self._lock:
+            if self._started or self._failed:
+                return
+            if os.environ.get("FORCE_SIM"):
+                print("[futek] FORCE_SIM set -> simulated force; the load cell is not opened.")
+                self._failed = True
+                return
+            self._started = True
+        threading.Thread(target=self._run, name="futek-reader", daemon=True).start()
+
+    def _run(self):
+        # Owns the device for its whole life: opens it on THIS thread, then reads it
+        # forever on THIS thread. No other thread ever touches the driver.
+        try:
+            import futek_cli
+            real_ok = getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
+            print(f"[futek] opening the load cell (owner thread)... real .NET driver loaded = {real_ok}")
+            if not real_ok:
+                print(f"[futek]   real driver did NOT load: {getattr(futek_cli, '_FUTEK_IMPORT_ERROR', None)}; "
+                      "using the MOCK load cell (synthetic force).")
+            device = futek_cli.FUTEKDeviceCLI()
+            from futek_cli import MockFUTEKDeviceCLI
+            kind = "MOCK (synthetic force)" if isinstance(device, MockFUTEKDeviceCLI) else "REAL"
+        except Exception as exc:
+            import traceback
+            print(f"[futek] FAILED to open the load cell: {type(exc).__name__}: {exc}")
+            print("[futek]   falling back to simulated force; not retrying until restart.")
+            traceback.print_exc()
+            with self._lock:
+                self._failed = True
+                self._device = None
+            return
+        with self._lock:
+            self._device = device
+            self._kind = kind
+        print(f"[futek] >>> load cell open: {kind}. One owner thread now reads it ~100 Hz.")
+        # The ONLY place the device is ever read:
+        while not self._stop:
+            try:
+                raw = device.getNormalData()
+                with self._lock:
+                    self._latest_raw = raw
+            except Exception:
+                # a single bad read is transient: keep the last value and keep going. A
+                # real disconnect is caught by the actuator position read (comms_lost),
+                # not by one bad force read, so we do NOT tear the device down here.
+                pass
+            time.sleep(SAMPLE_DT)
+
+    def wait_ready(self, timeout=15.0):
+        # Block until the first reading exists or the open failed. Called before a press
+        # so motion never starts against a not-yet-ready load cell.
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                if self._failed or self._latest_raw is not None:
+                    return
+            time.sleep(0.05)
+
+    def latest_raw(self):
+        with self._lock:
+            return self._latest_raw
+
+    def real_in_use(self):
+        # True when a device (real or mock) is open and being read; False when the open
+        # failed or FORCE_SIM is set, so callers treat force as simulated.
+        with self._lock:
+            return self._device is not None and not self._failed
+
+    def kind(self):
+        with self._lock:
+            return self._kind
+
+    def stop(self):
+        # Shut the reader down (app exit / explicit reconnect) and clear the failure
+        # latch so a later ensure_started() re-attempts the open.
+        with self._lock:
+            self._stop = True
+            dev = self._device
+        if dev is not None:
+            try:
+                dev.stop(); dev.exit()
+            except Exception:
+                pass
+        with self._lock:
+            self._device = None
+            self._latest_raw = None
+            self._started = False
+            self._failed = False
+            self._stop = False
+
+
+READER = _FutekReader()
 
 
 def _futek_kind(dev):
-    # human label for what kind of load cell we ended up with.
+    # human label for the load cell in use. `dev` is the single-owner READER (from
+    # _open_futek) or None. Returns exactly "REAL" only when a real device is being
+    # read, so callers can gate on it (e.g. shear's simulated flag).
     if dev is None:
         return "NONE (simulated force)"
-    try:
-        from futek_cli import MockFUTEKDeviceCLI
-        if isinstance(dev, MockFUTEKDeviceCLI):
-            return "MOCK (synthetic force)"
-    except Exception:
-        pass
+    if isinstance(dev, _FutekReader):
+        return dev.kind()       # "REAL" / "MOCK (synthetic force)" / "NONE"
     return "REAL"
 
 
 def _open_futek():
-    # return the cached live FUTEK device (opening it once), or None to simulate
-    # (Mac / no driver / FORCE_SIM). Logs verbosely so a failed real connection is
-    # visible in the terminal instead of silently falling back to simulated force.
-    global _FUTEK_CACHE, _FUTEK_FAILED
-    if os.environ.get("FORCE_SIM"):
-        return None
-    if _FUTEK_CACHE is not None:
-        # already open - reuse it silently. (No log here: the manual window's
-        # continuous sampler calls this ~10x/second, so a print would flood the log.)
-        return _FUTEK_CACHE
-    if _FUTEK_FAILED:
-        # We already tried and failed to open the real load cell this session. Do NOT
-        # retry the .NET open on every read: the manual window's continuous force
-        # sampler calls this ~10x/second, and re-running the broken open each time
-        # spammed errors and eventually crashed pythonnet (the IList<Device> marshal
-        # crash). Stay in simulated force until the app restarts or _close_futek()
-        # clears the flag (e.g. an explicit reconnect).
-        return None
-    try:
-        import futek_cli
-        real_ok = getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
-        print(f"[futek] opening the load cell... real .NET FUTEK driver loaded = {real_ok}")
-        if not real_ok:
-            print(f"[futek]   the FUTEK/.NET driver did NOT load: {getattr(futek_cli, '_FUTEK_IMPORT_ERROR', None)}")
-            print("[futek]   -> falling back to the MOCK load cell (synthetic force). On Windows this "
-                  "usually means the FUTEK DLLs in libs/windows/ are missing or .NET is unavailable.")
-        _FUTEK_CACHE = futek_cli.FUTEKDeviceCLI()
-        kind = _futek_kind(_FUTEK_CACHE)
-        if kind == "REAL":
-            print(f"[futek] >>> REAL load cell CONNECTED: model={getattr(_FUTEK_CACHE, 'ModelNumber', '?')} "
-                  f"serial={getattr(_FUTEK_CACHE, 'SerialNumber', '?')} units={getattr(_FUTEK_CACHE, 'UnitCode', '?')}")
-        else:
-            print(f"[futek] >>> load cell is {kind} - the REAL load cell is NOT being read.")
-    except Exception as exc:
-        import traceback
-        print(f"[futek] FAILED to open the load cell: {type(exc).__name__}: {exc}")
-        print("[futek]   the driver loaded but opening the device failed - is the USB load cell "
-              "plugged in and detected? Falling back to simulated force.")
-        traceback.print_exc()
-        _FUTEK_CACHE = None
-        # Remember the failure so we stop retrying the broken open on every read (above).
-        _FUTEK_FAILED = True
-        print("[futek]   not retrying the real load cell this session - restart the app "
-              "(or reconnect) to try again.")
-    return _FUTEK_CACHE
+    # Ensure the single owner reader is running, then BLOCK until it has a reading (or
+    # the open failed). Returns the reader when a device is in use, or None for
+    # simulated force. Callers keep using `simulated = (axis is None) or (futek is None)`.
+    READER.ensure_started()
+    READER.wait_ready()
+    return READER if READER.real_in_use() else None
 
 
 def _close_futek():
-    # drop the cached FUTEK (after a read failure / disconnect, or on shutdown) so
-    # the next _open_futek re-detects the device.
-    global _FUTEK_CACHE, _FUTEK_FAILED
-    if _FUTEK_CACHE is not None:
-        try:
-            _FUTEK_CACHE.stop(); _FUTEK_CACHE.exit()
-        except Exception:
-            pass
-        _FUTEK_CACHE = None
-    # clear the failure latch too, so an explicit reconnect/close re-attempts the open.
-    _FUTEK_FAILED = False
+    # Stop the owner reader (app shutdown / reconnect). A later force read re-opens it.
+    READER.stop()
 
 
 class RunEngine:
@@ -253,19 +312,17 @@ class RunEngine:
     def _read_force(self, futek, depth):
         # real load cell, or the coupled spring model in simulation.
         if futek is not None:
-            try:
-                # Signed converted reading. Callers tare to the start-of-press
-                # baseline (force - init_force) and then take the magnitude, which
-                # gives a positive compression force for a load cell of EITHER
-                # polarity. Abs is applied to the tared change, not here.
-                # Serialized: the .NET driver is not thread-safe (see _FUTEK_READ_LOCK).
-                with _FUTEK_READ_LOCK:
-                    return futek.getNormalData() * LBF_TO_N
-            except Exception:
-                # a transient read failure: return 0 but KEEP the cached device open.
-                # (Re-detecting it costs ~12 s; a real disconnect is caught by the
-                # position read setting STATE.comms_lost, not by a single bad read.)
-                return 0.0
+            # `futek` is the single-owner READER. Read the value its owner thread already
+            # cached - we NEVER touch the .NET driver here, so no two consumers can hit
+            # the device at once. Callers tare to the start-of-press baseline
+            # (force - init_force) then take the magnitude, which gives a positive
+            # compression force for a load cell of either polarity.
+            raw = futek.latest_raw()
+            if raw is not None:
+                return raw * LBF_TO_N
+            # device still opening or a momentary gap: on a real rig do not fake a
+            # spring force (presses wait for wait_ready() before moving, so this is rare).
+            return 0.0
         # simulation: a gently stiffening contact spring (force rises a little
         # faster as the sensor compresses, like real foam/silicone), so the
         # loading ramp is a smooth curve. No high-frequency ripple - the old
@@ -606,20 +663,12 @@ class RunEngine:
             STATE._move_loop_active = False
 
     def read_force_now(self):
-        # Read the load cell RIGHT NOW for the manual window's continuous live graph,
-        # without moving anything. Lets the Force/Cap vs Time plots keep advancing while
-        # the actuator is idle. During a move the move loop already streams force, so we
-        # just hand back the live value (no second device read on another thread).
-        #
-        # CRITICAL: the .NET FUTEK driver is NOT thread-safe. This runs on the HTTP
-        # request thread; a move loop runs on its own thread (background-thread runs)
-        # OR synchronously on another request thread (manual jog / force compression).
-        # is_running() only catches the background-thread runs, so we ALSO gate on
-        # _move_loop_active to catch manual moves. Without this, the manual window's
-        # 10 Hz sampler read the device at the same time as a manual compression read it,
-        # and the two concurrent reads corrupted the driver - the load cell dropped to
-        # simulated and stayed there. While any move loop owns the device, hand back the
-        # force it is already streaming instead of opening a second read on this thread.
+        # Idle live-force read for the manual window's continuous graph (no motion).
+        # During a move the move loop already streams force into self.live, so just hand
+        # that back. Otherwise read the value the single-owner reader has cached - this
+        # NEVER touches the device itself (only the owner thread does), so it can never
+        # collide with a move's reads. ensure_started() is non-blocking, so the first
+        # idle read returns immediately even while the device is still opening.
         if self.is_running() or STATE._move_loop_active:
             with self._lock:
                 return {"ok": True, "force": self.live.get("force", 0.0),
@@ -627,15 +676,20 @@ class RunEngine:
                         "simulated": self.live.get("simulated", True)}
         if os.environ.get("FORCE_SIM"):
             return {"ok": True, "force": 0.0, "position": STATE.position_mm, "simulated": True}
-        futek = _open_futek()
-        raw = self._read_force(futek, 0.0)
+        READER.ensure_started()
+        if READER.real_in_use():
+            raw = self._read_force(READER, 0.0)      # cached value from the owner thread
+            simulated = (STATE.axis is None)
+        else:
+            raw = self._read_force(None, 0.0)        # no device yet / failed: simulated
+            simulated = True
         # absolute force vs the resting baseline (captured at home), same reference the
         # manual force moves use, so the idle reading lines up with the move readings.
         if self._manual_baseline is None or abs(STATE.position_mm - HOME_MM) < 0.1:
             self._manual_baseline = raw
         force = abs(raw - self._manual_baseline)
         return {"ok": True, "force": round(force, 4), "position": round(STATE.position_mm, 4),
-                "simulated": (STATE.axis is None) or (futek is None)}
+                "simulated": simulated}
 
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
