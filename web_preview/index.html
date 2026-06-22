@@ -344,7 +344,7 @@
                   <span class="sensor-help" tabindex="0" data-tooltip="Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.">i</span>
                 </span>
                 <span id="manualIncrementField" class="suffix-field">
-                  <input id="manualIncrementDistance" type="number" min="0.01" max="12" step="0.01" value="0.1" />
+                  <input id="manualIncrementDistance" type="number" min="0.1" max="12" step="0.01" value="0.1" />
                   <span class="suffix">mm</span>
                 </span>
                 <span id="manualTargetForceField" class="suffix-field hidden">
@@ -520,7 +520,7 @@
                   <span class="sensor-help" tabindex="0" data-tooltip="Lowest force target in each fatigue cycle. Example: cycle between 1 N and 20 N.">i</span>
                 </span>
                 <span class="suffix-field">
-                  <input id="cyclicalLowerForce" type="number" min="0" max="32" step="0.1" value="1" />
+                  <input id="cyclicalLowerForce" type="number" min="1" max="32" step="1" value="1" />
                   <span class="suffix">N</span>
                 </span>
               </label>
@@ -542,7 +542,7 @@
                   <span class="sensor-help" tabindex="0" data-tooltip="Number of fatigue cycles per second.">i</span>
                 </span>
                 <span class="suffix-field">
-                  <input id="waveformFrequency" type="number" min="0.01" max="5" step="0.01" value="1" />
+                  <input id="waveformFrequency" type="number" min="1" max="5" step="1" value="1" />
                   <span class="suffix">Hz</span>
                 </span>
               </label>
@@ -703,7 +703,7 @@
             <label>
               <span class="label-text">Increment Distance</span>
               <span class="suffix-field">
-                <input id="incrementDistance" type="number" min="0.01" max="12" step="0.01" value="0.1" />
+                <input id="incrementDistance" type="number" min="0.1" max="12" step="0.01" value="0.1" />
                 <span class="suffix">mm</span>
               </span>
             </label>

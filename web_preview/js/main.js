@@ -1014,11 +1014,41 @@
       // precision) on commit/blur - allowing free typing first, then correcting on commit.
       // Reads each field's own min/max/step, so all limited inputs (force bounds, speed,
       // increment, extrusion, surface area, graph axes, cycle count, ...) snap uniformly
-      // and pick up limit changes automatically. Capture phase so the clamped value is in
-      // place before each field's own change handler (validation, preview, existing-test
-      // check) runs. focusout (which bubbles) also catches a blur with no value change.
+      // and pick up limit changes automatically.
+      //
+      // When a value was OUT OF RANGE (not just rounded), show a message naming that
+      // field's actual limit, in that field's own window. Two listeners on the same
+      // event: a CAPTURE listener clamps the value first (so each field's own change
+      // handler sees the corrected value) and records whether a limit was hit; a BUBBLE
+      // listener then shows the limit message AFTER the field's own handler ran, so the
+      // message is not immediately overwritten by that handler's status text.
+      const SNAP_LIMIT_MSG = {
+        runs:                ["main", "Number of Runs must be a whole number of at least 1."],
+        surfaceArea:         ["main", "Surface Area must be a positive number."],
+        incrementDistance:   ["calibration", "Increment Distance must be between 0.1 and 12 mm."],
+        extrusionDistance:   ["calibration", "Extrusion Distance must be between 0.5 and 12 mm."],
+        manualIncrementDistance: ["manual", "Increment Distance must be between 0.1 and 12 mm."],
+        manualActuatorSpeed: ["manual", "Actuator Speed can be up to 2 mm/s."],
+        manualTargetForce:   ["manual", "Target Force can be up to 32 N."],
+        cyclicalLowerForce:  ["fatigue", "Lower Force Bound must be a whole number of at least 1 N."],
+        cyclicalUpperForce:  ["fatigue", "Upper Force Bound cannot exceed 32 N."],
+        waveformFrequency:   ["fatigue", "Frequency must be a whole number of at least 1 Hz."],
+        cyclicalCycleCount:  ["fatigue", "Number of Cycles must be a whole number of at least 1."],
+      };
+      function showSnapLimitMessage(id) {
+        const entry = SNAP_LIMIT_MSG[id];
+        if (!entry) return;
+        const [where, msg] = entry;
+        if (where === "main") setMainMessage(msg, "error");
+        else if (where === "calibration") addCalibrationUpdate(msg);
+        else if (where === "manual") setManualState("READY", msg);
+        else if (where === "fatigue") setStatePill("cyclicalState", "ERROR", msg);
+      }
       ["change", "focusout"].forEach((evt) => {
-        document.addEventListener(evt, (e) => snapNumberInput(e.target), true);
+        document.addEventListener(evt, (e) => { e.target.__snapHit = snapNumberInput(e.target); }, true);
+        document.addEventListener(evt, (e) => {
+          if (e.target && e.target.__snapHit) { e.target.__snapHit = false; showSnapLimitMessage(e.target.id); }
+        }, false);
       });
       ["waveformType", "cyclicalLowerForce", "cyclicalUpperForce", "waveformFrequency", "cyclicalCycleCount"].forEach((id) => {
         document.getElementById(id).addEventListener("input", () => {

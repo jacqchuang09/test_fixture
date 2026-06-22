@@ -712,18 +712,23 @@
       // added later - snaps the same way without a hand-maintained list. Fields with no
       // min AND no max are left alone (nothing to snap to). Blank / mid-edit / non-numeric
       // values are left for the field's own required/validation handling.
+      // Returns true if the value was OUT OF RANGE and got clamped to a limit (so the
+      // caller can show a message naming that limit); false if it was in range or only
+      // precision-rounded.
       function snapNumberInput(el) {
-        if (!el || el.tagName !== "INPUT" || el.type !== "number") return;
+        if (!el || el.tagName !== "INPUT" || el.type !== "number") return false;
         const hasMin = el.getAttribute("min") !== null && el.min !== "";
         const hasMax = el.getAttribute("max") !== null && el.max !== "";
-        if (!hasMin && !hasMax) return;
+        if (!hasMin && !hasMax) return false;
         const raw = String(el.value).trim();
-        if (raw === "" || raw === "-" || raw === "." || raw === "-.") return;
+        if (raw === "" || raw === "-" || raw === "." || raw === "-.") return false;
         let n = Number(raw);
-        if (!Number.isFinite(n)) return;
+        if (!Number.isFinite(n)) return false;
         const min = hasMin ? Number(el.min) : -Infinity;
         const max = hasMax ? Number(el.max) : Infinity;
-        n = Math.min(max, Math.max(min, n));        // clamp into range
+        const clamped = Math.min(max, Math.max(min, n));
+        const hitLimit = clamped !== n;             // value was out of range
+        n = clamped;
         const step = el.getAttribute("step");
         if (step && step !== "any") {                // round to the field's precision
           const dec = (step.split(".")[1] || "").length;
@@ -731,6 +736,7 @@
           n = Math.round(n * f) / f;
         }
         if (String(n) !== el.value) el.value = n;
+        return hitLimit;
       }
 
       function formatDuration(seconds) {
