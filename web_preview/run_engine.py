@@ -16,7 +16,7 @@ from hardware import STATE, _mm_unit
 # -- press parameters ---------------------------------------------------------
 HOME_MM = 17.0              # retracted / home position
 GAP_MM = 10.95              # initial travel toward the sensor before the press
-FUJI_EXTRUSION_MAX_MM = 15.0  # ceiling for the operator-set Fuji extrusion distance (safety clamp)
+FUJI_EXTRUSION_MAX_MM = 12.0  # ceiling for the operator-set Fuji extrusion distance (safety clamp)
 SAMPLE_DT = 0.010           # 100 Hz sampling - record force every 10 ms
 JOG_POLL_DT = 0.04          # manual jog: poll the stage ~25 Hz (gentler on the serial port)
 UPPER_LIMIT_N = 32.0        # EM run press target - stop the press once force reaches this

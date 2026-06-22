@@ -321,9 +321,9 @@
         }
         const incrementInput = document.getElementById("manualIncrementDistance");
         const increment = Number(incrementInput.value || 0.1);
-        if (!Number.isFinite(increment) || increment < 0.01 || increment > 15) {
-          setManualState("READY", "increment distance must be between 0.01 mm and 15 mm.");
-          incrementInput.value = Math.min(15, Math.max(0.01, increment || 0.1));
+        if (!Number.isFinite(increment) || increment < 0.01 || increment > 12) {
+          setManualState("READY", "increment distance must be between 0.01 mm and 12 mm.");
+          incrementInput.value = Math.min(12, Math.max(0.01, increment || 0.1));
           return;
         }
         const signedDistance = direction === "down" ? increment : -increment;

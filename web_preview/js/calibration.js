@@ -54,11 +54,11 @@
         if (state) setStatePill("calibrationState", state, message || "", variant);
       }
 
-      // a valid extrusion distance is between 0.5 and 15 mm. Returns the number or
-      // null. The 15 mm ceiling matches the backend's FUJI_EXTRUSION_MAX_MM clamp.
+      // a valid extrusion distance is between 0.5 and 12 mm. Returns the number or
+      // null. The 12 mm ceiling matches the backend's FUJI_EXTRUSION_MAX_MM clamp.
       function validExtrusion(value) {
         const n = Number(value);
-        return (value !== "" && value != null && Number.isFinite(n) && n >= 0.5 && n <= 15) ? n : null;
+        return (value !== "" && value != null && Number.isFinite(n) && n >= 0.5 && n <= 12) ? n : null;
       }
 
       // the last distance actually used to START a Fuji Film test (remembered across
@@ -140,9 +140,9 @@
           addCalibrationUpdate("ERROR: increment distance must be a valid number.");
           return;
         }
-        if (increment < 0.1 || increment > 15) {
-          addCalibrationUpdate("ERROR: increment distance must be between 0.1 mm and 15 mm.");
-          input.value = Math.min(15, Math.max(0.1, increment || 0.1));
+        if (increment < 0.1 || increment > 12) {
+          addCalibrationUpdate("ERROR: increment distance must be between 0.1 mm and 12 mm.");
+          input.value = Math.min(12, Math.max(0.1, increment || 0.1));
           saveCalibrationIncrement();
           return;
         }
@@ -158,7 +158,7 @@
         // or fall back to the last-used value shown as the gray placeholder.
         const extrusion = effectiveExtrusionDistance();
         if (extrusion == null) {
-          addCalibrationUpdate("ERROR: set an extrusion distance between 0.5 mm and 15 mm before starting the Fuji Film Test.");
+          addCalibrationUpdate("ERROR: set an extrusion distance between 0.5 mm and 12 mm before starting the Fuji Film Test.");
           document.getElementById("extrusionDistance")?.focus();
           return;
         }
