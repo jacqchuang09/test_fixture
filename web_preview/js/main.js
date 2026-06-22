@@ -1010,22 +1010,15 @@
           setManualState("READY", `warning: ${value.toFixed(1)} N exceeds the actuator's ${ACTUATOR_PEAK_THRUST_N} N peak thrust and may not be reachable.`);
         }
       });
-      // decimal-input fields: allow free typing of decimals, then snap to the
-      // field's precision and range on commit (change/blur). [id, min, max, decimals]
-      [
-        ["cyclicalLowerForce", 0, 32, 1],
-        ["cyclicalUpperForce", 0, 32, 1],
-        ["manualTargetForce", 0, 32, 1],
-        ["manualActuatorSpeed", 0.01, 2, 3],
-        ["waveformFrequency", 0.01, 5, 2],
-        ["manualIncrementDistance", 0.01, 15, 2],
-        ["incrementDistance", 0.01, 15, 2],
-      ].forEach(([id, min, max, dec]) => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        const snap = () => normalizeNumberField(id, min, max, dec);
-        el.addEventListener("change", snap);
-        el.addEventListener("blur", snap);
+      // Snap EVERY numeric field that declares min/max limits into range (and to its step
+      // precision) on commit/blur - allowing free typing first, then correcting on commit.
+      // Reads each field's own min/max/step, so all limited inputs (force bounds, speed,
+      // increment, extrusion, surface area, graph axes, cycle count, ...) snap uniformly
+      // and pick up limit changes automatically. Capture phase so the clamped value is in
+      // place before each field's own change handler (validation, preview, existing-test
+      // check) runs. focusout (which bubbles) also catches a blur with no value change.
+      ["change", "focusout"].forEach((evt) => {
+        document.addEventListener(evt, (e) => snapNumberInput(e.target), true);
       });
       ["waveformType", "cyclicalLowerForce", "cyclicalUpperForce", "waveformFrequency", "cyclicalCycleCount"].forEach((id) => {
         document.getElementById(id).addEventListener("input", () => {

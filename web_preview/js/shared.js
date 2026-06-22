@@ -706,6 +706,33 @@
         el.value = n;
       }
 
+      // Global snap-to: clamp ANY numeric field that declares min/max limits into range
+      // (and round to its step precision) when it commits/blurs. Reads the limits straight
+      // from each input's own min/max/step attributes, so every limited field - and any
+      // added later - snaps the same way without a hand-maintained list. Fields with no
+      // min AND no max are left alone (nothing to snap to). Blank / mid-edit / non-numeric
+      // values are left for the field's own required/validation handling.
+      function snapNumberInput(el) {
+        if (!el || el.tagName !== "INPUT" || el.type !== "number") return;
+        const hasMin = el.getAttribute("min") !== null && el.min !== "";
+        const hasMax = el.getAttribute("max") !== null && el.max !== "";
+        if (!hasMin && !hasMax) return;
+        const raw = String(el.value).trim();
+        if (raw === "" || raw === "-" || raw === "." || raw === "-.") return;
+        let n = Number(raw);
+        if (!Number.isFinite(n)) return;
+        const min = hasMin ? Number(el.min) : -Infinity;
+        const max = hasMax ? Number(el.max) : Infinity;
+        n = Math.min(max, Math.max(min, n));        // clamp into range
+        const step = el.getAttribute("step");
+        if (step && step !== "any") {                // round to the field's precision
+          const dec = (step.split(".")[1] || "").length;
+          const f = Math.pow(10, dec);
+          n = Math.round(n * f) / f;
+        }
+        if (String(n) !== el.value) el.value = n;
+      }
+
       function formatDuration(seconds) {
         const totalMinutes = Math.max(1, Math.round(seconds / 60));
         const hours = Math.floor(totalMinutes / 60);
