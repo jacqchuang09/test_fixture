@@ -374,25 +374,6 @@
         }
       }
 
-      // TEMP: one-click test of the bundled real EM sample dataset through the full
-      // pipeline (all EM graphs + interactive plot + saved outputs).
-      async function testSampleData(sample = "EM") {
-        const result = await runAnalysisProgress(`Analyzing bundled ${sample} sample data…`, () => callApi("/api/analyze-sample", { sample }));
-        if (!result.ok) {
-          showErrorDialog(result.message || "Sample analysis failed.", "Sample analysis failed");
-          return;
-        }
-        setMainMessage(result.message || "Sample analysis complete.");
-        const analysis = result.analysis || null;
-        if (sample === "Shear") {
-          populateShearAnalysis(analysis);
-          shearAnalysisModal.showModal();
-        } else {
-          populateEmAnalysis(result.message || "EM sample analysis complete.", analysis);
-          emAnalysisModal.showModal();
-        }
-      }
-
       function invalidateBasicSettings() {
         if (!settingsVerified) return;
         settingsVerified = false;

@@ -196,31 +196,6 @@ class Handler(SimpleHTTPRequestHandler):
             from analysis import get_analysis_progress
             return {"ok": True, **get_analysis_progress()}
 
-        if path == "/api/analyze-sample":
-            # TEMP: run a bundled real sample dataset (EM or Shear) through the full
-            # pipeline (graphs + interactive plot + saved outputs).
-            samples = {
-                "EM": {
-                    "folder": ROOT / "sample_data" / "03 09 26_325mm2_EM",
-                    "test_type": "EM", "surface_area": "325mm2", "sensor_id": "03 09 26_325mm2_EM", "runs": 3,
-                },
-                "Shear": {
-                    "folder": ROOT / "sample_data" / "260310B01S02BA" / "04 17 26_50.27_Shear",
-                    "test_type": "Shear", "surface_area": "50.27mm2", "sensor_id": "260310B01S02BA", "runs": 1,
-                },
-            }
-            choice = samples.get(payload.get("sample") or "EM", samples["EM"])
-            sample_payload = {
-                **payload,
-                "selected_test_folder": str(choice["folder"]),
-                "test_type": choice["test_type"],
-                "sensor_type": "Standard",
-                "surface_area": choice["surface_area"],
-                "sensor_id": choice["sensor_id"],
-                "runs": choice["runs"],
-                "analyze_existing": True,
-            }
-            return self.perform_analysis(sample_payload)
 
         if path == "/api/start-run":
             # run one real EM press (real FUTEK + Zaber, or the coupled simulator
