@@ -241,6 +241,18 @@ class EMAnalysis:
                 cap_interp[:, j] = np.interp(t_c_i, ct, cd)
 
             fut_interp = np.interp(t_f_i, elapsed, self.fut[i].iloc[:, 1].values.astype(float))
+            # Orient the force so a compression press reads POSITIVE. This fixture uses
+            # load cells of BOTH polarities; a cell that outputs negative under compression
+            # leaves the press as a downward dip, so the pipeline's argmax peak detection
+            # locks onto the near-zero start - the loading window [:loc_f] comes out empty
+            # and the whole analysis crashes ("argmax of an empty sequence"), falling back
+            # to the synthesized preview. Flip the sign (reflected about the resting
+            # baseline, preserving magnitude) only when the dominant excursion is negative;
+            # positive-reading data is left unchanged.
+            if fut_interp.size:
+                base = float(fut_interp[0])
+                if abs(np.nanmin(fut_interp) - base) > abs(np.nanmax(fut_interp) - base):
+                    fut_interp = 2.0 * base - fut_interp
             self.run.append([cap_interp, fut_interp])
 
     # -- sync CAP & FUT on the release peak, plot raw signals ---------------
@@ -291,11 +303,16 @@ class EMAnalysis:
             # Trim the unload tail (peak + last 500 samples) so the drop-off
             # values don't pollute the rising P.S curve.
             force = test_fut[:, 1]
-            peak_idx = np.argmax(force)
+            # Guard a degenerate run (empty loading window) so it cannot crash the whole
+            # analysis on np.argmax of an empty sequence; it just yields an empty trace.
+            peak_idx = int(np.argmax(force)) if force.size else 0
             test_cap = test_cap[:peak_idx, :]
             test_fut = test_fut[:peak_idx, :]
-            test_cap = test_cap[:-500, :]
-            test_fut = test_fut[:-500, :]
+            # only trim the 500-sample unload tail when there is enough data to trim; a
+            # short loading curve keeps what it has instead of being emptied by [:-500].
+            if test_cap.shape[0] > 500:
+                test_cap = test_cap[:-500, :]
+                test_fut = test_fut[:-500, :]
 
             self.test.append([test_cap, test_fut])
 
@@ -412,8 +429,8 @@ class EMAnalysis:
                 cap_inc_ij = []
                 for p in range(1, 10):
                     inc_mult = p * 5
-                    idx = np.argmin(np.abs(x_smooth - inc_mult))
-                    if np.abs(x_smooth[idx] - inc_mult) < 2.0:
+                    idx = int(np.argmin(np.abs(x_smooth - inc_mult))) if x_smooth.size else -1
+                    if idx >= 0 and np.abs(x_smooth[idx] - inc_mult) < 2.0:
                         cap_inc_ij.append(y_smooth[idx])
                     else:
                         cap_inc_ij.append(np.nan)
