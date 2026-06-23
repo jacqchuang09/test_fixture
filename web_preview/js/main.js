@@ -385,7 +385,7 @@
         redoRunInput.disabled = false;
         document.getElementById("testType").disabled = false;
         document.getElementById("testConfig").classList.add("hidden");
-        setMainMessage("basic settings changed. please click verify again.", "error");
+        setMainMessage("Basic settings changed. Please click Verify again", "error");
       }
 
       function clearResolvedTestFolder(resetRedo = false) {
@@ -431,12 +431,17 @@
         const sensor = segmentValue("sensorNumber");
         const location = segmentValue("sensorLocation").toUpperCase();
 
-        if (!/^\d{2}$/.test(year)) return "sensor id year must be exactly 2 digits.";
-        if (!/^\d{2}$/.test(month)) return "sensor id month must be exactly 2 digits.";
-        if (!/^\d{2}$/.test(day)) return "sensor id day must be exactly 2 digits.";
-        if (!/^\d{2}$/.test(batch)) return "sensor id batch number must be exactly 2 numeric digits.";
-        if (!/^\d{2}$/.test(sensor)) return "sensor id sensor number must be exactly 2 numeric digits.";
-        if (!/^(A|B|AB|BA)$/.test(location)) return "sensor id location must be A, B, AB, or BA.";
+        // Incomplete (any segment left blank) gets one generic message; only a segment
+        // that is filled in but malformed gets its specific message (per story 1.1.7).
+        if (!year || !month || !day || !batch || !sensor || !location) {
+          return "Complete all Sensor ID segments before continuing";
+        }
+        if (!/^\d{2}$/.test(year)) return "Sensor ID year must be exactly 2 digits";
+        if (!/^\d{2}$/.test(month)) return "Sensor ID month must be exactly 2 digits";
+        if (!/^\d{2}$/.test(day)) return "Sensor ID day must be exactly 2 digits";
+        if (!/^\d{2}$/.test(batch)) return "Sensor ID batch number must be exactly 2 numeric digits";
+        if (!/^\d{2}$/.test(sensor)) return "Sensor ID sensor number must be exactly 2 numeric digits";
+        if (!/^(A|B|AB|BA)$/.test(location)) return "Sensor ID location must be A, B, AB, or BA";
         return "";
       }
 
@@ -641,12 +646,16 @@
       async function verifySettings() {
         const cfg = config();
         const useCustomSensorId = document.getElementById("useCustomSensorId").checked;
-        if (!cfg.save_folder || !cfg.sensor_type) {
-          setMainMessage("fill in save folder and sensor type.", "error");
+        if (!cfg.save_folder) {
+          setMainMessage("Fill in Save Folder before continuing", "error");
+          return;
+        }
+        if (!cfg.sensor_type) {
+          setMainMessage("Fill in Sensor Type", "error");
           return;
         }
         if (useCustomSensorId && !cfg.sensor_id) {
-          setMainMessage("enter a custom sensor id.", "error");
+          setMainMessage("Enter a custom sensor ID", "error");
           return;
         }
         if (!useCustomSensorId) {
@@ -657,7 +666,7 @@
           }
         }
         if (!useCustomSensorId && !isValidSensorId(cfg.sensor_id)) {
-          setMainMessage("sensor id must use format YYMMDDB##S##A/B/AB/BA, for example 250506B01S01B.", "error");
+          setMainMessage("Sensor ID must use the format YYMMDDB##S##A/B/AB/BA, for example 250506B01S01B", "error");
           return;
         }
         const result = await callApi("/api/verify");
