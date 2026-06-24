@@ -164,7 +164,7 @@
         // Target Force gets its own description instead of the Increment Distance text.
         const primaryTip = document.querySelector("#manualPrimaryControlField .sensor-help");
         if (primaryTip) primaryTip.dataset.tooltip = isForceMode
-          ? "Target compression force the actuator drives to in force mode. Maximum allowed force is 32 N."
+          ? "Target compression force in Newtons for force-controlled manual testing. Maximum allowed force is 32 N."
           : "Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.";
         document.getElementById("manualIncrementField").classList.toggle("hidden", isForceMode);
         document.getElementById("manualTargetForceField").classList.toggle("hidden", !isForceMode);
