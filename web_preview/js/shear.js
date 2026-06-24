@@ -52,6 +52,23 @@
         setShearState("READY", "click Start to begin live shear graph.");
       }
 
+      // Close the Shear Testing Window. If a recording is active, warn first (1.7.10):
+      // closing discards the in-progress capture. Confirm stops the read loop and the
+      // backend; Cancel leaves the window open and recording running.
+      async function closeShearTestWindow() {
+        if (shearTimer) {
+          const ok = await promptConfirm(
+            "A recording is in progress. Closing will discard the current capture. Continue?",
+            { title: "Recording in progress", confirmLabel: "Discard & Close", cancelLabel: "Cancel" });
+          if (!ok) return;
+          clearInterval(shearTimer);
+          shearTimer = null;
+          await callApi("/api/stop", {});
+        }
+        stopReconnectWatch();
+        shearTestModal.close();
+      }
+
       // Live shear capture reads the REAL FUTEK load cell on the backend (no actuator
       // motion - the operator applies shear by hand). It starts a backend read loop and
       // polls /api/run-status for the live force, rebuilding the graph from the dense
@@ -396,9 +413,15 @@
 
       function populateShearAnalysis(analysis = null) {
         renderInteractivePanel("shear", analysis);
+        // Per-tab notice when a tab's underlying output is missing for this dataset.
+        const unavailable = `<p class="analysis-unavailable">This output is unavailable for this dataset</p>`;
         // When the real matplotlib engine ran, show its figure + real detection.
         if (analysis && analysis.shear_images && analysis.shear_images.raw_fig) {
-          const detection = Array.isArray(analysis.shear_detection) ? analysis.shear_detection : [];
+          const detectionRaw = Array.isArray(analysis.shear_detection) ? analysis.shear_detection : [];
+          // detection rows are present but none carry usable channel data: flag that
+          // the analysis data could not be fully read rather than rendering a blank table.
+          const detection = detectionRaw.filter((d) => Number.isFinite(Number(d.channel)));
+          const detectionUnreadable = detectionRaw.length && !detection.length;
           const failed = detection.filter((d) => d.failed).map((d) => d.channel);
           const shortedChannels = failed.length ? formatShortedChannels(failed) : "None";
           const testResult = analysis.shear_result || (failed.length ? "FAIL" : "PASS");
@@ -411,8 +434,29 @@
           document.getElementById("shear-plot").innerHTML = `
             <div class="em-analysis-png-wrap">${emPngImg(analysis.shear_images.raw_fig, "Raw shearing figure - CAP and force")}</div>
           `;
-          document.getElementById("shear-detection").innerHTML = shearDetectionTable(negativeByChannel, deltaEventsByChannel);
+          document.getElementById("shear-detection").innerHTML = detectionUnreadable
+            ? `<p class="analysis-unavailable">Some analysis data could not be read - results may be incomplete</p>`
+            : (detection.length ? shearDetectionTable(negativeByChannel, deltaEventsByChannel) : unavailable);
           renderShearReportPanel(shortedChannels, testResult);
+          showAnalysisTab("shear", "plot");
+          return;
+        }
+        // Real engine ran but produced no plot figure for this dataset: the plot
+        // tab shows the unavailable notice instead of falling through to a preview.
+        if (analysis && analysis.shear_images && !analysis.shear_images.raw_fig) {
+          document.getElementById("shear-plot").innerHTML = unavailable;
+          const detection = Array.isArray(analysis.shear_detection)
+            ? analysis.shear_detection.filter((d) => Number.isFinite(Number(d.channel)))
+            : [];
+          const negativeByChannel = detection.map((d) => ({ channel: d.channel, values: d.min_cap != null ? [d.min_cap] : [] }));
+          const deltaEventsByChannel = detection
+            .filter((d) => d.delta_over_count > 0)
+            .map((d) => ({ channel: d.channel, delta: d.max_delta }));
+          document.getElementById("shear-detection").innerHTML = detection.length
+            ? shearDetectionTable(negativeByChannel, deltaEventsByChannel)
+            : unavailable;
+          const failed = detection.filter((d) => d.failed).map((d) => d.channel);
+          renderShearReportPanel(failed.length ? formatShortedChannels(failed) : "None", analysis.shear_result || (failed.length ? "FAIL" : "PASS"));
           showAnalysisTab("shear", "plot");
           return;
         }

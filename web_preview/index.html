@@ -183,12 +183,12 @@
 
           <!-- this section opens after verify is clicked -->
           <section id="testConfig" class="hidden">
-            <h2>Test Configuration</h2>
+            <h2>Test Configuration Window</h2>
             <div class="form-grid">
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Test Type</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="EM Test performs force-controlled compression testing. Shear Test performs live shear-response testing. Fatigue Test repeatedly cycles force bounds to fatigue-test sensor lifespan.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="EM Test performs force-controlled compression testing. Shear Test performs live shear-response testing. Manual Test allows direct actuator control. Fatigue Test repeatedly compresses the sensor over many cycles.">i</span>
                 </span>
                 <select id="testType">
                   <option value="EM" selected>EM Test</option>
@@ -214,7 +214,7 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Number of Runs</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="Total number of EM runs to complete (1 to 10; typically 3). Disabled when redoing a specific existing run.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Number of EM test runs to complete.">i</span>
                 </span>
                 <input id="runs" type="number" min="1" max="10" step="1" value="3" />
               </label>
@@ -222,7 +222,7 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Zaber COM Port</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="COM3 = EM Fixture 1. COM7 = EM Fixture 2.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Select the port connected to the Zaber actuator.">i</span>
                 </span>
                 <select id="comport">
                   <option value="" selected>Select COM port</option>
@@ -232,7 +232,7 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Run to Redo</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="Pick which run to redo. Only active runs are listed - a run that was already superseded by a redo can't be redone again. Unlocks when you choose Redo a Specific Run from an existing test folder.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Redo only a specific EM run from an existing test folder. This is only available when ‘Redo a Specific Run’ is selected from the Existing Test Found popup.">i</span>
                 </span>
                 <select id="runToRedo" disabled>
                   <option value="">Select run…</option>
@@ -311,7 +311,7 @@
     <dialog id="manualTestModal" class="wide-dialog em-dialog">
       <div class="modal-head">
         <h2>Manual Testing Window</h2>
-        <button id="manualTestCloseButton" class="close" onclick="manualTestModal.close()">x</button>
+        <button id="manualTestCloseButton" class="close" onclick="closeManualTestWindow()">x</button>
       </div>
       <div class="modal-body graph-shell">
         <div>
@@ -491,7 +491,7 @@
     <dialog id="cyclicalTestModal" class="wide-dialog em-dialog">
       <div class="modal-head">
         <h2>Fatigue Testing Window</h2>
-        <button id="cyclicalTestCloseButton" class="close" onclick="stopReconnectWatch(); cyclicalTestModal.close()">x</button>
+        <button id="cyclicalTestCloseButton" class="close" onclick="closeCyclicalTestWindow()">x</button>
       </div>
       <div class="modal-body graph-shell">
         <div class="cyclical-state-row">
@@ -503,7 +503,7 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Waveform Type</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="Choose the force waveform used to cycle the actuator between the lower and upper force bounds.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Choose the force waveform used to cycle the actuator between the lower and upper force bounds. Sine is a smooth press/release. Square holds at each bound.">i</span>
                 </span>
                 <select id="waveformType">
                   <option value="Sine" selected>Sine</option>
@@ -552,7 +552,7 @@
                 <input id="cyclicalCycleCount" type="number" min="1" step="1" value="28800" />
               </label>
             </div>
-            <div id="cyclicalEstimate" class="alert" style="width: 100%; text-align: left;">This test will take approximately 13 h 53 min.</div>
+            <div id="cyclicalEstimate" class="alert" style="width: 100%; text-align: left;">This test's estimated duration is calculated from your settings.</div>
             <div class="mini-row">
               <button id="cyclicalStartButton" class="success" onclick="startCyclicalTest()">▶ Start</button>
               <button id="cyclicalPauseButton" class="pause-button" onclick="pauseCyclicalTest()" disabled>■ Stop</button>
@@ -571,7 +571,7 @@
     <dialog id="shearTestModal" class="wide-dialog em-dialog">
       <div class="modal-head">
         <h2>Shear Testing Window</h2>
-        <button id="shearTestCloseButton" class="close" onclick="shearTestModal.close()">x</button>
+        <button id="shearTestCloseButton" class="close" onclick="closeShearTestWindow()">x</button>
       </div>
       <div class="modal-body graph-shell">
         <div>

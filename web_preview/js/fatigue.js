@@ -31,16 +31,40 @@
         return { lowerForce, upperForce, isValid: upperForce > lowerForce };
       }
 
+      // Shape of one fatigue cycle, on a normalized phase 0..1, returned on a
+      // 0..1 scale (0 = lower bound, 1 = upper bound). Kept in lockstep with the
+      // backend target_force() in run_engine.py so the preview matches what the
+      // actuator actually does. Every shape starts and ends near the lower bound.
+      function cyclicalShape(type, phase) {
+        switch (type) {
+          case "Square":
+            // hold at the upper bound for the first half, lower for the second.
+            return phase < 0.5 ? 1 : 0;
+          case "Triangle":
+            // steady ramp up to the peak at mid-cycle, then a steady ramp down.
+            return phase < 0.5 ? phase / 0.5 : (1 - phase) / 0.5;
+          case "Sawtooth":
+            // ramp up across the whole cycle, then a fast release back to lower.
+            return phase;
+          case "Blood Pressure": {
+            // arterial pulse: sharp systolic upstroke and peak, a smaller dicrotic
+            // wave after the notch, then a slow diastolic decay back to lower.
+            const systolic = Math.exp(-Math.pow((phase - 0.18) / 0.085, 2));
+            const dicrotic = 0.45 * Math.exp(-Math.pow((phase - 0.42) / 0.13, 2));
+            return (systolic + dicrotic) / 1.015; // normalize so the peak hits 1
+          }
+          case "Sine":
+          default:
+            // smooth press/release: starts at lower, peaks at upper at mid-cycle.
+            return 0.5 - 0.5 * Math.cos(2 * Math.PI * phase);
+        }
+      }
+
       function cyclicalForceValue(type, time, lowerForce, upperForce, frequency) {
         const low = clampCyclicalLowerForce(lowerForce);
         const high = clampForce(upperForce);
-        const middle = (low + high) / 2;
-        const amplitude = (high - low) / 2;
         const phase = (time * frequency) % 1;
-        if (type === "Square") {
-          return phase < 0.5 ? high : low;
-        }
-        return middle + amplitude * Math.sin(2 * Math.PI * frequency * time);
+        return low + (high - low) * cyclicalShape(type, phase);
       }
 
       function cyclicalEstimatedSeconds() {
@@ -84,6 +108,25 @@
         }
         drawWaveformSvg("cyclicalGraph", points, "time", "force", "Time (s)", "Force (N)", Math.min(0, lowForce), Math.max(1, highForce), duration);
         updateCyclicalEstimate();
+      }
+
+      // Close the Fatigue Testing Window. If a run is active, warn first (1.11.14):
+      // Confirm stops the test (the backend returns the actuator to a safe position) and
+      // closes; Cancel leaves the window open and the test running.
+      async function closeCyclicalTestWindow() {
+        if (cyclicalTimer || cyclicalReturnHomeTimer) {
+          const ok = await promptConfirm(
+            "A fatigue test is in progress. Closing will stop the test and return the actuator to a safe position. Continue?",
+            { title: "Test in progress", confirmLabel: "Stop & Close", cancelLabel: "Cancel" });
+          if (!ok) return;
+          clearInterval(cyclicalTimer);
+          clearTimeout(cyclicalReturnHomeTimer);
+          cyclicalTimer = null;
+          cyclicalReturnHomeTimer = null;
+          await callApi("/api/stop", {});
+        }
+        stopReconnectWatch();
+        cyclicalTestModal.close();
       }
 
       function setCyclicalControlsLocked(isLocked) {

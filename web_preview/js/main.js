@@ -733,7 +733,7 @@
           cfg = config();
         }
         if (cfg.redo_run && (!Number.isInteger(cfg.run_to_redo) || cfg.run_to_redo < 1)) {
-          setMainMessage("run to redo must be a positive whole number.", "error");
+          setMainMessage("Select a run to redo before continuing", "error");
           return;
         }
         if (cfg.redo_run) {
@@ -755,11 +755,11 @@
         const surfaceAreaRaw = (document.getElementById("surfaceArea").value || "").trim();
         const surfaceAreaValue = Number(surfaceAreaRaw);
         if (!surfaceAreaRaw) {
-          setMainMessage("Fill in the surface area before continuing.", "error");
+          setMainMessage("Fill in Surface Area before continuing", "error");
           return;
         }
         if (!Number.isFinite(surfaceAreaValue) || surfaceAreaValue <= 0) {
-          setMainMessage("Surface area must be a positive number.", "error");
+          setMainMessage("Surface Area must be a positive number", "error");
           return;
         }
         // EM runs each a full press cycle; require a whole number from 1 to
@@ -768,8 +768,12 @@
         if (cfg.test_type === "EM" && !cfg.redo_run) {
           const runsRaw = (document.getElementById("runs").value || "").trim();
           const runsValue = Number(runsRaw);
-          if (!runsRaw || !Number.isFinite(runsValue) || !Number.isInteger(runsValue) || runsValue < 1) {
-            setMainMessage("Number of runs must be a whole number of at least 1.", "error");
+          if (!runsRaw) {
+            setMainMessage("Fill in Number of Runs before continuing", "error");
+            return;
+          }
+          if (!Number.isFinite(runsValue) || !Number.isInteger(runsValue) || runsValue < 1) {
+            setMainMessage("Number of Runs must be a positive whole number", "error");
             return;
           }
           if (runsValue > MAX_EM_RUNS) {
@@ -783,7 +787,7 @@
           // just a selection. For now testing can proceed on the simulated stage and
           // we only surface the connection error when a port fails to connect.
           if (!cfg.comport) {
-            setMainMessage("Select a COM port before continuing.", "error");
+            setMainMessage("Fill in Zaber COM Port before continuing", "error");
             return;
           }
         }
@@ -972,10 +976,12 @@
         if (fujiTimer) event.preventDefault();
       });
       cyclicalTestModal.addEventListener("cancel", (event) => {
-        if (cyclicalReturnHomeTimer) event.preventDefault();
+        event.preventDefault();
+        closeCyclicalTestWindow();
       });
       shearTestModal.addEventListener("cancel", (event) => {
-        if (shearTimer) event.preventDefault();
+        event.preventDefault();
+        closeShearTestWindow();
       });
       document.getElementById("redoRun").addEventListener("change", () => {
         const redoRunInput = document.getElementById("redoRun");
@@ -1074,7 +1080,8 @@
       });
       document.getElementById("manualControlMode").addEventListener("change", updateManualControlMode);
       manualTestModal.addEventListener("cancel", (event) => {
-        if (isManualMoving()) event.preventDefault();
+        event.preventDefault();
+        closeManualTestWindow();
       });
 
       // On the Windows rig, default the save folder to the operator's Downloads.

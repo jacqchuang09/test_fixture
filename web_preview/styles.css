@@ -824,6 +824,16 @@
         margin-top: 0;
       }
 
+      /* Shown in an analysis tab when its underlying output is missing or could
+         not be read for the loaded dataset - a quiet, muted notice, not an error. */
+      .analysis-unavailable {
+        color: var(--muted);
+        font-size: 14px;
+        padding: 24px 8px;
+        margin: 0;
+        text-align: center;
+      }
+
       .metric-grid {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -133,10 +133,23 @@ class Handler(SimpleHTTPRequestHandler):
             # UI can hard-block on a real rig but stay soft in simulation.
             import os
             import futek_cli
+            from run_engine import FUTEK_INIT_FAIL_MSG
             connected = (STATE.cli is not None) and (not STATE.simulated)
-            simulation = bool(os.environ.get("FORCE_SIM")) or (not getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False))
+            futek_ok = (not bool(os.environ.get("FORCE_SIM"))) and getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
+            simulation = not futek_ok
+            # Surface the exact operator-facing reasons the start-gate can block on, so
+            # the UI can show the missing-hardware guidance. Messages only; the boolean
+            # flags above still drive the gate.
+            port = STATE.comport or "COM3"
+            messages = {}
+            if not futek_ok:
+                messages["futek"] = FUTEK_INIT_FAIL_MSG
+            if not connected:
+                messages["zaber"] = (f"Could not connect to Zaber actuator on {port}. "
+                                     "Check the connection and try again")
             return {"ok": True, "connected": connected, "simulation": simulation,
-                    "connection_lost": bool(STATE.connection_lost), "comport": STATE.comport}
+                    "connection_lost": bool(STATE.connection_lost), "comport": STATE.comport,
+                    "messages": messages}
 
         if path == "/api/zaber-reconnect":
             # live reconnect watcher: try to reopen the last known port after a

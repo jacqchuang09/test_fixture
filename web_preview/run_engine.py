@@ -91,6 +91,10 @@ class ZaberDisconnect(Exception):
     """Raised inside a run loop when the live Zaber stops responding (comms lost)."""
 
 
+class FutekDisconnect(Exception):
+    """Raised inside a run loop when the live FUTEK load cell stops responding mid-run."""
+
+
 # --- Single-owner load cell reader -------------------------------------------
 # The FUTEK is a single device that does NOT tolerate being read from more than one
 # place at a time. Concurrent reads, or reads from different threads, corrupt the .NET
@@ -113,6 +117,8 @@ class _FutekReader:
         self._started = False
         self._failed = False       # open failed (or FORCE_SIM) -> simulated this session
         self._stop = False
+        self._read_fail = 0        # consecutive bad reads on an open device (3 = lost mid-run)
+        self._lost = False         # set True after a real device stops responding mid-recording
 
     def ensure_started(self):
         # Open the device and start the owner thread on first force need. Non-blocking:
@@ -160,11 +166,17 @@ class _FutekReader:
                 raw = device.getNormalData()
                 with self._lock:
                     self._latest_raw = raw
+                    self._read_fail = 0
             except Exception:
-                # a single bad read is transient: keep the last value and keep going. A
-                # real disconnect is caught by the actuator position read (comms_lost),
-                # not by one bad force read, so we do NOT tear the device down here.
-                pass
+                # a single bad read is transient: keep the last value and keep going. But
+                # a REAL load cell that stops responding for several reads in a row has
+                # been unplugged mid-recording - flag it (3-strike, like the actuator's
+                # comms_lost) so an in-progress capture can invalidate itself.
+                with self._lock:
+                    if kind == "REAL":
+                        self._read_fail += 1
+                        if self._read_fail >= 3:
+                            self._lost = True
             time.sleep(SAMPLE_DT)
 
     def wait_ready(self, timeout=15.0):
@@ -187,6 +199,12 @@ class _FutekReader:
         with self._lock:
             return self._device is not None and not self._failed
 
+    def lost(self):
+        # True once a REAL device that was open has stopped responding (unplugged
+        # mid-recording). Mirrors STATE.comms_lost for the actuator.
+        with self._lock:
+            return self._lost
+
     def kind(self):
         with self._lock:
             return self._kind
@@ -208,6 +226,8 @@ class _FutekReader:
             self._started = False
             self._failed = False
             self._stop = False
+            self._read_fail = 0
+            self._lost = False
 
 
 READER = _FutekReader()
@@ -231,6 +251,22 @@ def _open_futek():
     READER.ensure_started()
     READER.wait_ready()
     return READER if READER.real_in_use() else None
+
+
+FUTEK_INIT_FAIL_MSG = ("Could not connect to the FUTEK load cell. Confirm it is plugged in "
+                       "and that you are running on Windows.")
+
+
+def _futek_init_failed(futek):
+    # True only when a REAL load cell was expected (the .NET driver loaded) but the open
+    # did not produce a usable real device. On a Mac / no-hardware machine the driver
+    # never loads, so this stays False and the simulated (MOCK) run proceeds untouched.
+    try:
+        import futek_cli
+        real_expected = getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
+    except Exception:
+        real_expected = False
+    return real_expected and (futek is None or _futek_kind(futek) != "REAL")
 
 
 def _close_futek():
@@ -484,9 +520,9 @@ class RunEngine:
                         print(f"[calibration] manual_move: COMMS LOST at pos={STATE.position_mm:.2f} mm")
                         self._stop_axis(axis)
                         self._set(status="error", disconnect=True, position=STATE.position_mm,
-                                  message="Actuator connection lost during the move.")
+                                  message="Actuator connection lost. Check the cable before continuing.")
                         return {"ok": False, "position": STATE.position_mm, "disconnect": True,
-                                "message": "Actuator connection lost during the move."}
+                                "message": "Actuator connection lost. Check the cable before continuing."}
                     tripped = record_and_check()
                     if tripped is not None:
                         print(f"[calibration] manual_move: SAFETY STOP at pos={STATE.position_mm:.2f} mm")
@@ -605,9 +641,9 @@ class RunEngine:
                 if STATE.comms_lost:
                     self._stop_axis(axis)
                     self._set(status="error", disconnect=True, position=STATE.position_mm,
-                              message="Actuator connection lost during the move.")
+                              message="Actuator connection lost. Check the cable before continuing.")
                     return {"ok": False, "position": STATE.position_mm, "disconnect": True,
-                            "message": "Actuator connection lost during the move."}
+                            "message": "Actuator connection lost. Check the cable before continuing."}
                 depth = max(0.0, STATE.position_mm - HOME_MM)
                 f = self._read_force(futek, depth)
                 # ABSOLUTE force vs the resting baseline (positive for either polarity),
@@ -616,11 +652,15 @@ class RunEngine:
                 t = time.time() - t0
                 trace.append([round(t, 4), round(force, 4)])
                 self._set(force=force, position=STATE.position_mm, elapsed=t, samples=len(trace), trace=list(trace))
-                # safety: over-force ceiling or a sudden metal-contact spike.
-                if force > FORCE_CEILING_N or (prev_force is not None and abs(force - prev_force) > spike_limit):
+                # safety: a sudden metal-contact force spike, or the over-force ceiling.
+                spike = prev_force is not None and abs(force - prev_force) > spike_limit
+                if force > FORCE_CEILING_N or spike:
                     self._stop_axis(axis)
-                    msg = (f"Force limit reached ({force:.1f} N). Manual move stopped for safety "
-                           f"at {STATE.position_mm:.2f} mm.")
+                    if spike:
+                        msg = "Force spike detected. Motion stopped for safety"
+                    else:
+                        msg = (f"Force limit reached ({force:.1f} N). Manual move stopped for safety "
+                               f"at {STATE.position_mm:.2f} mm.")
                     self._set(status="error", safety_stop=True, position=STATE.position_mm, force=force, message=msg)
                     return {"ok": True, "position": STATE.position_mm, "force": force,
                             "stopped_for_safety": True, "simulated": simulated, "message": msg}
@@ -927,6 +967,8 @@ class RunEngine:
                 stage = abs(force - init_force)
                 if STATE.comms_lost:
                     raise ZaberDisconnect()
+                if futek is not None and not simulated and futek.lost():
+                    raise FutekDisconnect()
                 if (prev_force is not None and abs(stage - prev_force) > self._spike_limit(descend * SAMPLE_DT)) or stage > FORCE_CEILING_N:
                     raise ForceSpikeStop()
                 prev_force = stage
@@ -943,7 +985,7 @@ class RunEngine:
                 if self._at_travel_limit():
                     self._stop_axis(axis); self._home(axis)
                     self._set(status="error", safety_stop=True, position=HOME_MM, trace=list(trace),
-                              message="Actuator reached its travel limit before the target force. Test stopped for safety.")
+                              message="Target force not reached. Test stopped for safety.")
                     return
                 time.sleep(SAMPLE_DT)
             self._home(axis)
@@ -955,6 +997,10 @@ class RunEngine:
                       message="Force spike detected. Motion stopped for safety.")
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
+        except FutekDisconnect:
+            self._stop_axis(axis); self._home(axis)
+            self._set(status="error", position=HOME_MM,
+                      message="Load cell disconnected during calibration.")
         except Exception as exc:
             self._set(status="error", message=f"Fuji Film Test failed: {exc}")
         finally:
@@ -980,6 +1026,12 @@ class RunEngine:
 
     def _run_shear(self):
         futek = _open_futek()
+        if _futek_init_failed(futek):
+            # a real load cell was expected but it did not come up - surface the
+            # connect-the-FUTEK guidance instead of starting a dead capture.
+            print("[shear] load cell failed to initialize")
+            self._set(status="error", message=FUTEK_INIT_FAIL_MSG)
+            return
         simulated = futek is None or _futek_kind(futek) != "REAL"
         print(f"[shear] starting live shear read - load cell = {_futek_kind(futek)}")
         t0 = time.time()
@@ -992,6 +1044,14 @@ class RunEngine:
                   trace=[], disconnect=False, safety_stop=False, message="")
         try:
             while not STATE.stop_requested:
+                # mid-recording disconnect: if a REAL load cell stops responding while
+                # capturing, stop now and invalidate the capture (mirrors the actuator's
+                # comms_lost mid-run detection in the fatigue/EM loops).
+                if futek is not None and futek.lost():
+                    print("[shear] load cell disconnected during recording - invalidating capture")
+                    self._set(status="error", disconnect=True,
+                              message="Load cell disconnected during recording. Capture invalidated")
+                    return
                 f = self._read_force(futek, 0.0)
                 if init_force is None:
                     init_force = f
@@ -1057,6 +1117,12 @@ class RunEngine:
         if axis is None:
             print("[fatigue] no Zaber connected -> simulated run, load cell not opened")
         futek = _open_futek() if axis is not None else None
+        if axis is not None and _futek_init_failed(futek):
+            # a real load cell was expected (the actuator is connected on a real rig) but
+            # it did not come up - do not run a fatigue test with no force feedback.
+            print("[fatigue] load cell failed to initialize")
+            self._set(status="error", message=FUTEK_INIT_FAIL_MSG)
+            return
         from futek_cli import MockFUTEKDeviceCLI
         real_run = (axis is not None) and (futek is not None) and not isinstance(futek, MockFUTEKDeviceCLI)
         force_futek = futek if real_run else None
@@ -1067,16 +1133,32 @@ class RunEngine:
         total_cycles = max(1, int(params.get("cycle_count", 1)))
         frequency = max(0.01, float(params.get("frequency", 1.0)))
         waveform = str(params.get("waveform", "Sine")).lower()
-        mid = (lower + upper) / 2.0
-        amp = (upper - lower) / 2.0
         period = 1.0 / frequency
         total_time = total_cycles * period
 
+        def cyclical_shape(phase):
+            # Shape of one fatigue cycle on a normalized phase 0..1, returned on a
+            # 0..1 scale (0 = lower bound, 1 = upper bound). Mirrors cyclicalShape()
+            # in fatigue.js exactly so the live preview matches what the actuator
+            # actually does. Every shape starts and ends near the lower bound.
+            if waveform.startswith("square"):
+                return 1.0 if phase < 0.5 else 0.0
+            if waveform.startswith("triangle"):
+                return phase / 0.5 if phase < 0.5 else (1.0 - phase) / 0.5
+            if waveform.startswith("sawtooth"):
+                return phase
+            if waveform.startswith("blood"):
+                # arterial pulse: sharp systolic peak, a smaller dicrotic wave, then
+                # a slow diastolic decay back to the lower bound.
+                systolic = math.exp(-(((phase - 0.18) / 0.085) ** 2))
+                dicrotic = 0.45 * math.exp(-(((phase - 0.42) / 0.13) ** 2))
+                return (systolic + dicrotic) / 1.015
+            # sine (default): smooth press/release, starts low, peaks at upper.
+            return 0.5 - 0.5 * math.cos(2.0 * math.pi * phase)
+
         def target_force(t):
             # one full cycle per period: starts at the lower bound, peaks at upper.
-            if waveform.startswith("square"):
-                return upper if ((t * frequency) % 1.0) < 0.5 else lower
-            return mid - amp * math.cos(2.0 * math.pi * frequency * t)
+            return lower + (upper - lower) * cyclical_shape((t * frequency) % 1.0)
 
         self._set(status="running", run=0, cycle=0, total_cycles=total_cycles,
                   simulated=simulated, force=0.0, samples=0, message="", position=HOME_MM,
@@ -1099,6 +1181,8 @@ class RunEngine:
             nonlocal idx, prev_force
             if STATE.comms_lost:
                 raise ZaberDisconnect()
+            if force_futek is not None and force_futek.lost():
+                raise FutekDisconnect()
             if (prev_force is not None and abs(force_value - prev_force) > spike_threshold) or force_value > FORCE_CEILING_N:
                 raise ForceSpikeStop()
             prev_force = force_value
@@ -1148,6 +1232,8 @@ class RunEngine:
                     # loss, a sudden force jump, or a reading past the hard ceiling.
                     if STATE.comms_lost:
                         raise ZaberDisconnect()
+                    if force_futek is not None and force_futek.lost():
+                        raise FutekDisconnect()
                     STATE._read_position()
                     d = max(0.0, STATE.position_mm - start_pos)
                     f = self._read_force(force_futek, d)
@@ -1247,6 +1333,12 @@ class RunEngine:
                       message="Force spike detected. Fatigue test stopped for safety.")
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
+        except FutekDisconnect:
+            # the load cell dropped out mid-run: stop the actuator, invalidate the run.
+            self._stop_axis(axis)
+            self._home(axis)
+            self._set(status="error", disconnect=True, position=HOME_MM,
+                      message="Load cell disconnected during the fatigue test. Run invalidated")
         except Exception as exc:
             self._set(status="error", message=f"Fatigue test failed: {exc}")
         finally:
@@ -1362,7 +1454,7 @@ class RunEngine:
         # disconnect=True lets the UI tell this apart from a force-spike stop: it
         # hard-blocks Start and starts the live reconnect watcher.
         self._set(status="error", disconnect=True,
-                  message="Actuator connection lost. Reconnect the Zaber to continue.")
+                  message="Actuator connection lost. Check the cable before continuing.")
 
     def _write_cap(self, test_folder, run_number, readings, surface_area_mm2):
         # synthetic capacitance for a simulated run: eight channels, each a sigmoid

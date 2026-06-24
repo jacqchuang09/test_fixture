@@ -91,6 +91,20 @@
         return Boolean(manualMotionTimer);
       }
 
+      // Close the Manual Testing Window. If the actuator is moving, warn first (1.9.12):
+      // Confirm stops motion (the backend returns the actuator home) and closes; Cancel
+      // leaves the window open and the move running.
+      async function closeManualTestWindow() {
+        if (isManualMoving()) {
+          const ok = await promptConfirm(
+            "The actuator is moving. Closing will stop motion and return it home. Continue?",
+            { title: "Actuator moving", confirmLabel: "Stop & Close", cancelLabel: "Cancel" });
+          if (!ok) return;
+          await callApi("/api/stop", {});
+        }
+        manualTestModal.close();
+      }
+
       function setManualControlsLocked(isLocked) {
         // NOTE: the graph-display controls (Last Seconds, Y-Axis Min/Limit, Show Markers,
         // Cumulative Time) are deliberately NOT in this list - they only change how the
@@ -146,6 +160,12 @@
         const isForceMode = manualControlMode() === "force";
         const locked = isManualMoving();
         document.getElementById("manualPrimaryControlLabel").textContent = isForceMode ? "Target Force" : "Increment Distance";
+        // the primary-control info icon is shared between modes - swap its tooltip so
+        // Target Force gets its own description instead of the Increment Distance text.
+        const primaryTip = document.querySelector("#manualPrimaryControlField .sensor-help");
+        if (primaryTip) primaryTip.dataset.tooltip = isForceMode
+          ? "Target compression force the actuator drives to in force mode. Maximum allowed force is 32 N."
+          : "Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.";
         document.getElementById("manualIncrementField").classList.toggle("hidden", isForceMode);
         document.getElementById("manualTargetForceField").classList.toggle("hidden", !isForceMode);
         document.getElementById("manualControlStack").classList.toggle("force-mode", isForceMode);
@@ -419,6 +439,14 @@
       }
 
       async function performManualAnalysis() {
+        // Guard against being invoked without valid data: the button is gated
+        // (disabled when manualData.length <= 1), but show a clear message rather
+        // than opening an empty analysis window if it is ever called regardless.
+        if (manualData.length <= 1) {
+          setManualState("READY", "No manual test data available to analyze");
+          showErrorDialog("No manual test data available to analyze", "No data to analyze");
+          return;
+        }
         document.getElementById("manualAnalysisButton").disabled = true;
         const result = await runAnalysisProgress("Generating manual analysis outputs...", () => callApi("/api/perform-analysis", {
           manual_readings: manualData,
@@ -448,6 +476,17 @@
             `<div class="em-analysis-png-wrap">${emPngImg(manualImages.force_vs_time, "Force vs Time")}</div>`;
           document.getElementById("manual-capTime").innerHTML =
             `<div class="em-analysis-png-wrap">${emPngImg(manualImages.cap_vs_time, "Capacitance vs Time")}</div>`;
+          showAnalysisTab("manual", activeTab);
+          return;
+        }
+        // Manual data exists but none of it parses into finite numeric readings:
+        // show the same per-tab "could not be read" notice rather than empty graphs.
+        const parsedReadings = manualData.filter((point) => Number.isFinite(Number(point.time)) && Number.isFinite(Number(point.force)));
+        if (manualData.length && !parsedReadings.length) {
+          const unreadable = `<p class="analysis-unavailable">Manual test data could not be read; results may be incomplete</p>`;
+          document.getElementById("manual-capForce").innerHTML = unreadable;
+          document.getElementById("manual-forceTime").innerHTML = unreadable;
+          document.getElementById("manual-capTime").innerHTML = unreadable;
           showAnalysisTab("manual", activeTab);
           return;
         }
@@ -526,7 +565,7 @@
             addCalibrationUpdate("WARNING: move timed out - controls unlocked. Check the actuator.");
           } else if (result && result.disconnect) {
             disconnected = true;
-            addCalibrationUpdate(result.message || "Actuator connection lost during the move.");
+            addCalibrationUpdate(result.message || "Actuator connection lost. Check the cable before continuing.");
             showDisconnectDialog(result.message);
           } else if (result && result.stopped_for_safety) {
             if (typeof result.position === "number") setPositionReadout(result.position);
