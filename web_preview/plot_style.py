@@ -54,6 +54,18 @@ _HIGH_QUALITY = {
 }
 
 
+# Quantity-based colors so each EM analysis graph type reads consistently and
+# relates to the P.S curve color coding (capacitance = blue, 1st derivative =
+# orange). The raw-signal figures are colored by what each subplot shows (the
+# type of graph), not by channel.
+SIGNAL_COLORS = {
+    "cap": "tab:blue",          # change in CAP vs time
+    "pressure": "tab:green",    # pressure vs time
+    "hysteresis": "tab:purple", # change in CAP vs pressure (loading curve)
+    "derivative": "tab:orange", # 1st derivative (matches the P.S figure)
+}
+
+
 def apply_plot_style():
     """Apply the high-quality analysis-plot styling to matplotlib's rcParams."""
     mpl.rcParams.update(_HIGH_QUALITY)

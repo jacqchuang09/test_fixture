@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 from scipy.signal import find_peaks
 
-from plot_style import apply_plot_style, rasterize_dense_lines
+from plot_style import apply_plot_style, rasterize_dense_lines, SIGNAL_COLORS
 
 apply_plot_style()  # high-quality, crisp-text SVG styling for all figures
 from scipy.ndimage import uniform_filter1d
@@ -59,6 +59,21 @@ def _run_sort_key(path):
 
     match = re.search(r"(\d+)", path.stem)
     return (int(match.group(1)) if match else 0, path.name)
+
+
+def _share_axes(axes):
+    # Put a list of axes onto one shared x/y scale (the union of their autoscaled
+    # limits) so subplots can be compared on the same scale.
+    axes = [a for a in axes if a is not None]
+    if not axes:
+        return
+    x0 = min(a.get_xlim()[0] for a in axes)
+    x1 = max(a.get_xlim()[1] for a in axes)
+    y0 = min(a.get_ylim()[0] for a in axes)
+    y1 = max(a.get_ylim()[1] for a in axes)
+    for a in axes:
+        a.set_xlim(x0, x1)
+        a.set_ylim(y0, y1)
 
 
 class EMAnalysis:
@@ -316,27 +331,63 @@ class EMAnalysis:
 
             self.test.append([test_cap, test_fut])
 
-            # Per-channel raw-signal figure (CAP/time, Pressure/time, hysteresis).
+            # (raw-signal figures are drawn after this loop, in _plot_raw_signals,
+            # so every channel and run can share one axis scale for comparison.)
+
+        self._plot_raw_signals()
+
+    def _plot_raw_signals(self):
+        # Per-channel raw-signal figures (CAP/time, Pressure/time, hysteresis),
+        # drawn after self.test is fully built so every figure shares ONE set of
+        # axis limits and can be compared directly. A dot marks every sample.
+        if not self.test:
+            return
+        cap_vals, time_vals, press_vals = [], [], []
+        for tc, tf in self.test:
+            if tc.size:
+                cap_vals.append(tc[:, 1:1 + self.ch]); time_vals.append(tc[:, 0])
+            if tf.size:
+                press_vals.append(tf[:, 1]); time_vals.append(tf[:, 0])
+
+        def _lim(arrs, pad=0.05):
+            if not arrs:
+                return None
+            lo = float(np.nanmin([np.nanmin(a) for a in arrs]))
+            hi = float(np.nanmax([np.nanmax(a) for a in arrs]))
+            margin = (hi - lo) * pad or 1.0
+            return lo - margin, hi + margin
+
+        cap_lim, time_lim, press_lim = _lim(cap_vals), _lim(time_vals), _lim(press_vals)
+
+        for i, (tc, tf) in enumerate(self.test):
+            if not tc.size or not tf.size:
+                continue
             for j in range(self.ch):
                 fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12))
-
-                ax1.plot(self.test[i][0][:, 0], self.test[i][0][:, j + 1])
+                # color each subplot by the TYPE of graph, not by channel; a dot per sample.
+                ax1.plot(tc[:, 0], tc[:, j + 1], "-o", markersize=2, color=SIGNAL_COLORS["cap"])
                 ax1.set_ylabel("Change in CAP (pF)", fontsize=12)
                 ax1.set_xlabel("Time (s)", fontsize=12)
                 ax1.set_title(f"Raw Signal - Run #{self.run_numbers[i]} - CH{j + 1}", fontsize=14, fontweight="bold")
-                ax1.grid(True, alpha=0.3)
 
-                ax2.plot(self.test[i][1][:, 0], self.test[i][1][:, 1])
+                ax2.plot(tf[:, 0], tf[:, 1], "-o", markersize=2, color=SIGNAL_COLORS["pressure"])
                 ax2.set_ylabel("Pressure (kPa)", fontsize=12)
                 ax2.set_xlabel("Time (s)", fontsize=12)
-                ax2.grid(True, alpha=0.3)
 
-                ax3.plot(self.test[i][1][:, 1], self.test[i][0][:, j + 1])
+                ax3.plot(tf[:, 1], tc[:, j + 1], "-o", markersize=2, color=SIGNAL_COLORS["hysteresis"])
                 ax3.set_xlabel("Pressure (kPa)", fontsize=12)
                 ax3.set_ylabel("Change in CAP (pF)", fontsize=12)
-                ax3.grid(True, alpha=0.3)
 
-                ax1.sharex(ax2)
+                for ax in (ax1, ax2, ax3):
+                    ax.grid(True, alpha=0.3)
+                # shared scales: every channel/run figure uses the same limits.
+                if time_lim:
+                    ax1.set_xlim(time_lim); ax2.set_xlim(time_lim)
+                if cap_lim:
+                    ax1.set_ylim(cap_lim); ax3.set_ylim(cap_lim)
+                if press_lim:
+                    ax2.set_ylim(press_lim); ax3.set_xlim(press_lim)
+
                 plt.tight_layout()
                 run_dir = self.path / "Raw Signal" / f"Run {self.run_numbers[i]}"
                 run_dir.mkdir(parents=True, exist_ok=True)
@@ -490,13 +541,14 @@ class EMAnalysis:
                 x_smooth = uniform_filter1d(x[st_pt:], size=100, mode="nearest")
                 y_smooth = uniform_filter1d(y[st_pt:], size=100, mode="nearest")
 
-                axes[i].plot(x_smooth, y_smooth, "-", linewidth=2, label=f"Ch. #: {j + 1}")
+                axes[i].plot(x_smooth, y_smooth, "-o", markersize=1.6, linewidth=2, label=f"Ch. #: {j + 1}")
                 axes[i].set_title(f"Run {self.run_numbers[i]}", fontsize=14, fontweight="bold")
                 axes[i].set_xlabel("Pressure (kPa)", fontsize=12)
                 axes[i].set_ylabel("Change in CAP (pF)", fontsize=12)
                 axes[i].grid(True, alpha=0.3)
                 axes[i].legend(loc="lower right", fontsize=10)
 
+        _share_axes(axes)  # one x/y scale across the run subplots so they compare directly
         plt.tight_layout()
         filename = self.path / "PS curves all ch per run.svg"
         rasterize_dense_lines(plt.gcf())
@@ -512,7 +564,7 @@ class EMAnalysis:
         colors = plt.cm.tab10(np.linspace(0, 1, max(num_runs, 1)))
         for i in range(num_runs):
             for j in range(self.ch):
-                axes[j].plot(self.zaber_x[i], self.zaber_y[i][j], "-", linewidth=2.5,
+                axes[j].plot(self.zaber_x[i], self.zaber_y[i][j], "-o", markersize=1.4, linewidth=2.5,
                              color=colors[i], label=f"Run {self.run_numbers[i]}", alpha=0.8)
                 axes[j].set_title(f"CH {j + 1}", fontsize=14, fontweight="bold")
                 axes[j].set_xlabel("Pressure (kPa)", fontsize=11)
@@ -521,6 +573,7 @@ class EMAnalysis:
 
         for j in range(self.ch):
             axes[j].legend(loc="lower right", fontsize=10, framealpha=0.9)
+        _share_axes(axes[:self.ch])  # one x/y scale across the channel subplots
         for j in range(self.ch, 8):
             axes[j].axis("off")
 
