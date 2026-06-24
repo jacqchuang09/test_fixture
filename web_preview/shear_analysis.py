@@ -125,11 +125,25 @@ class ShearAnalysis:
                 cur = twin_axes[ch_idx].get_ylim()
                 twin_axes[ch_idx].set_ylim(min(cur[0], y_min - margin), max(cur[1], y_max + margin))
 
-            fut_df = self.fut_data[file_idx] if file_idx < len(self.fut_data) else None
+        # Force always plots from the FUT files, independent of capacitance, so the
+        # load-cell trace shows even when no CAP has been dropped in.
+        for fut_df in self.fut_data:
             if fut_df is not None and fut_df.shape[1] >= 3:
                 force_values, time_values = _fut_force_time(fut_df)
                 n = min(len(time_values), len(force_values))
                 ax_force.plot(time_values[:n], force_values[:n], "g-", linewidth=1.5, alpha=0.7)
+
+        # No capacitance is ever fabricated: CAP comes only from files dropped into
+        # the CAP/ folder. When none has been added, leave the per-channel graphs
+        # empty with a clear note (and no misleading auto-scaled y-axis) instead of
+        # plotting anything.
+        if not self.cap_data:
+            for ch_idx, ax in enumerate(axes):
+                ax.set_yticks([])
+                twin_axes[ch_idx].set_yticks([])
+                ax.text(0.5, 0.5, "No capacitance data - drop CAP files into the CAP folder",
+                        transform=ax.transAxes, ha="center", va="center",
+                        fontsize=10, color="#8a8f98", style="italic")
 
         plt.tight_layout()
         output_path = self.path / "Shear_Failure_Check.svg"
@@ -190,8 +204,11 @@ def run_shear_analysis(test_folder, sensor_id):
     the data/format is unusable (the caller falls back to the preview analysis).
     """
     analyzer = ShearAnalysis(test_folder, sensor_id)
-    if not analyzer.cap_data:
-        raise ValueError("no CAP files found for shear analysis")
+    # CAP is optional: when no capacitance file has been dropped in, the figure
+    # shows empty per-channel graphs (with a note) plus the real force trace,
+    # rather than raising. Only bail out if there is nothing at all to plot.
+    if not analyzer.cap_data and not analyzer.fut_data:
+        raise ValueError("no CAP or FUT files found for shear analysis")
 
     image_path = analyzer.plot_cap_and_force()
     negative, delta_over = analyzer.analyze_shorted_channels()

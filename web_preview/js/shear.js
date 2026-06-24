@@ -190,11 +190,9 @@
           const command = index === 0 ? "M" : "L";
           return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
         }).join(" ");
-        const markerStep = Math.max(1, Math.ceil(data.length / 40));
+        // a dot at every sample (the load cell is read at 100 Hz).
         const markers = settings.showMarkers
-          ? data.filter((_, index) => index % markerStep === 0 || index === data.length - 1)
-              .map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2.4" fill="#3f8b42"></circle>`)
-              .join("")
+          ? data.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="#3f8b42"></circle>`).join("")
           : "";
         setGraphHoverPoints("shearGraph", data.map((point) => ({
           x: toX(point.time),

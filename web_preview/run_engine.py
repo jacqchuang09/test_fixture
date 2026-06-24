@@ -861,16 +861,13 @@ class RunEngine:
 
             self._home(axis)
             fut_path = self._write_fut(test_folder, run_number, readings)
-            # Capacitance source of truth is the CAP/ folder. On the real rig (a
-            # Zaber is connected) we NEVER fabricate CAP - the operator adds the CAP
-            # files manually for now, and the computer will record them itself later;
-            # either way the analysis auto-detects whatever real CAP is present. We
-            # only synthesize CAP on a pure-software demo machine (no actuator at
-            # all) so the full analysis pipeline can still be shown end-to-end.
-            # Keyed on the actuator (axis), not the load cell, so a missing/undetected
-            # FUTEK does not cause fake capacitance to be written on the rig.
-            if axis is None:
-                self._write_cap(test_folder, run_number, readings, surface_area_mm2)
+            # Capacitance is NEVER fabricated. The CAP/ folder is the only source of
+            # truth: the operator drops the real capacitance file(s) in manually (and
+            # the computer will record them itself later). The analysis auto-detects
+            # whatever real CAP is present, and shows empty capacitance graphs when
+            # none has been added - no synthetic data ever reaches the analysis plots.
+            # (Previously, a pure-software demo machine synthesized CAP here; that was
+            # removed so the perform-analysis graphs only ever show real data.)
             # never overwrite: record this run (and the redo reason) in the log.
             import run_log
             run_log.record_run(test_folder, run_number, redo_of=redo_of, reason=reason)

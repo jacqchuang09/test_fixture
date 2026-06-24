@@ -82,8 +82,9 @@
             return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
           }).join(" ");
           const color = colors[runIndex % colors.length];
+          // a dot at every sample (the load cell is read at 100 Hz).
           const markers = runData.length > 1
-            ? runData.filter((_, index) => index % 50 === 0 || index === runData.length - 1).map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2.3" fill="${color}"></circle>`).join("")
+            ? runData.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="${color}"></circle>`).join("")
             : "";
           return `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>${markers}`;
         }).join("");

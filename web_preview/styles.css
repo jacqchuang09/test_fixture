@@ -1204,6 +1204,12 @@
         border-radius: 8px;
         background: white;
         padding: 12px;
+        /* scroll to zoom in / out on the graph, drag to pan, double-click to reset
+           (the zoom transform is applied to the SVG inside; overflow clips it) */
+        overflow: hidden;
+      }
+      .graph-wrap > svg {
+        transition: transform 0.05s linear;
       }
 
       .graph-tooltip {

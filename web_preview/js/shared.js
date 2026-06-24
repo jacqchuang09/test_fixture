@@ -846,7 +846,7 @@
           return `${command}${toX(point[xKey]).toFixed(2)},${toY(point[yKey]).toFixed(2)}`;
         }).join(" ");
         const markers = (!settings || settings.showMarkers)
-          ? data.map((point) => `<circle cx="${toX(point[xKey]).toFixed(2)}" cy="${toY(point[yKey]).toFixed(2)}" r="3" fill="#3f8b42"></circle>`).join("")
+          ? data.map((point) => `<circle cx="${toX(point[xKey]).toFixed(2)}" cy="${toY(point[yKey]).toFixed(2)}" r="2.2" fill="#3f8b42"></circle>`).join("")
           : "";
         setGraphHoverPoints(canvasId, data.map((point) => ({
           x: toX(point[xKey]),
@@ -866,3 +866,58 @@
           ${markers}
         `;
       }
+
+      // ---- live-graph zoom: scroll the wheel over any graph to zoom in/out on the
+      // data, drag to pan, double-click to reset. The zoom is a CSS transform on the
+      // <svg> element, so it survives the live redraws (which only replace innerHTML).
+      (function enableGraphZoom() {
+        const graphSvg = (target) => (target && target.closest ? target.closest(".graph-wrap svg") : null);
+        const zoomOf = (svg) => (svg._zoom || (svg._zoom = { scale: 1, tx: 0, ty: 0 }));
+        function apply(svg) {
+          const z = zoomOf(svg);
+          svg.style.transformOrigin = "0 0";
+          svg.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.scale})`;
+          svg.style.cursor = z.scale > 1 ? "grab" : "default";
+        }
+        document.addEventListener("wheel", (e) => {
+          const svg = graphSvg(e.target);
+          if (!svg) return;
+          e.preventDefault();
+          const z = zoomOf(svg);
+          const rect = svg.getBoundingClientRect();
+          const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+          const next = Math.min(8, Math.max(1, z.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+          // keep the point under the cursor fixed while zooming
+          z.tx = cx - (cx - z.tx) * (next / z.scale);
+          z.ty = cy - (cy - z.ty) * (next / z.scale);
+          z.scale = next;
+          if (z.scale === 1) { z.tx = 0; z.ty = 0; }
+          apply(svg);
+        }, { passive: false });
+        let pan = null;
+        document.addEventListener("mousedown", (e) => {
+          const svg = graphSvg(e.target);
+          if (!svg || zoomOf(svg).scale <= 1) return;
+          const z = zoomOf(svg);
+          pan = { svg, x: e.clientX, y: e.clientY, tx: z.tx, ty: z.ty };
+          svg.style.cursor = "grabbing";
+          e.preventDefault();
+        });
+        document.addEventListener("mousemove", (e) => {
+          if (!pan) return;
+          const z = zoomOf(pan.svg);
+          z.tx = pan.tx + (e.clientX - pan.x);
+          z.ty = pan.ty + (e.clientY - pan.y);
+          apply(pan.svg);
+        });
+        document.addEventListener("mouseup", () => {
+          if (pan) { pan.svg.style.cursor = "grab"; pan = null; }
+        });
+        document.addEventListener("dblclick", (e) => {
+          const svg = graphSvg(e.target);
+          if (!svg) return;
+          const z = zoomOf(svg);
+          z.scale = 1; z.tx = 0; z.ty = 0;
+          apply(svg);
+        });
+      })();

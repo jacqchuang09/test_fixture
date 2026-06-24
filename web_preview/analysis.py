@@ -120,6 +120,12 @@ class SavedTestAnalyzer:
                 # data, tell the operator exactly which CAP files to add and stop;
                 # the analysis auto-detects them on the next run.
                 return self._missing_cap_response(fut_runs, cap_runs)
+        elif test_type == "Shear":
+            # Shear, like EM, needs capacitance dropped into the CAP/ folder before
+            # analysis can run (the shorted-channel check is a capacitance check).
+            # Prompt for the missing CAP files instead of running on force alone.
+            if not cap_runs or (fut_runs and set(fut_runs.keys()) != set(cap_runs.keys())):
+                return self._missing_cap_response(fut_runs, cap_runs, label="Shear")
 
         if em_summary is not None:
             channel_stats = em_summary["channel_stats"]
@@ -375,22 +381,25 @@ class SavedTestAnalyzer:
                         stats[r[0]] = r[1]
         return stats
 
-    def _missing_cap_response(self, fut_runs, cap_runs):
-        # EM analysis needs a capacitance (CAP) file for every active run. Spell out
-        # exactly which files to add and where, so the operator can drop them in and
-        # re-run (auto-detected). No silent synthetic-preview fallback.
+    def _missing_cap_response(self, fut_runs, cap_runs, label="EM"):
+        # EM and Shear analysis need a capacitance (CAP) file for every active run.
+        # Spell out exactly which files to add and where, so the operator can drop
+        # them in and re-run (auto-detected). No silent synthetic-preview fallback.
         cap_dir = self.test_folder / "CAP"
-        missing = sorted(set(fut_runs.keys()) - set(cap_runs.keys()))
-        if missing:
-            needed = ", ".join(f"Run {r}.csv" for r in missing)
-            detail = f"Add the capacitance file(s) {needed} to {cap_dir}"
+        if not cap_runs and fut_runs:
+            detail = f"Add the capacitance file(s) for each run to {cap_dir}"
         else:
-            have = ", ".join(f"Run {r}" for r in sorted(fut_runs))
-            detail = (f"The capacitance files in {cap_dir} do not line up with the "
-                      f"recorded runs ({have})")
+            missing = sorted(set(fut_runs.keys()) - set(cap_runs.keys()))
+            if missing:
+                needed = ", ".join(f"Run {r}.csv" for r in missing)
+                detail = f"Add the capacitance file(s) {needed} to {cap_dir}"
+            else:
+                have = ", ".join(f"Run {r}" for r in sorted(fut_runs))
+                detail = (f"The capacitance files in {cap_dir} do not line up with the "
+                          f"recorded runs ({have})")
         return {
             "ok": False,
-            "message": f"EM analysis needs capacitance data for every run. {detail}, then run analysis again.",
+            "message": f"{label} analysis needs capacitance data for every run. {detail}, then run analysis again.",
         }
 
     def _find_files(self, folder_name, pattern):

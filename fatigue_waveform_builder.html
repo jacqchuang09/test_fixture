@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fatigue Waveform Builder - Preview</title>
+<!--
+  Standalone mockup of the proposed fatigue waveform BUILDER. No backend, no
+  hardware: open it straight from a browser to show the idea.
+
+  The concept: Lower, Upper, Frequency, and Cycles always mean the same thing.
+  The waveform preset only swaps the SHAPE between those bounds. Presets carry a
+  few sliders each (Blood pressure adds heart rate, dicrotic notch depth, and
+  upstroke sharpness). "Custom" reveals a safe equation field for power users.
+  A slew-rate check warns when a shape changes force faster than the actuator can
+  physically follow on the rig.
+-->
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --line: #d7dee9;
+    --line-strong: #c7d1df;
+    --text: #161d29;
+    --muted: #697790;
+    --blue: #3f73e6;
+    --blue-dark: #315ec5;
+    --green: #3f8b42;
+    --red: #c5423c;
+    --amber-bg: #fff4e2;
+    --amber-line: #f0cf96;
+    --amber-text: #8a5a16;
+    --green-bg: #ecf7ee;
+    --green-line: #bfe2c4;
+    --green-text: #1f5d2a;
+    --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font); -webkit-font-smoothing: antialiased;
+  }
+  .page { padding: 28px 24px 56px; display: flex; justify-content: center; }
+  .dialog {
+    width: min(1120px, 100%); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16); overflow: hidden;
+  }
+  .modal-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 20px 24px; border-bottom: 1px solid var(--line);
+  }
+  .modal-head h2 { margin: 0; font-size: 23px; font-weight: 800; }
+  .preview-tag {
+    font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 5px 12px;
+  }
+  .modal-body { padding: 22px 24px; }
+
+  /* control rows: label | control | value */
+  .row { display: grid; grid-template-columns: 190px minmax(0, 1fr) 84px; align-items: center; gap: 16px; margin-bottom: 14px; }
+  .row > .lbl { font-size: 15px; font-weight: 600; }
+  .row > .val { text-align: right; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  select, input[type="number"], input[type="text"] {
+    width: 100%; height: 46px; border: 1px solid var(--line-strong); border-radius: 7px;
+    background: #fff; color: #05070c; font: inherit; font-size: 17px; padding: 0 14px; outline: none;
+  }
+  select:focus-visible, input:focus-visible { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(63, 115, 230, 0.18); }
+  input[type="range"] { width: 100%; height: 26px; accent-color: var(--blue); cursor: pointer; }
+
+  .full { grid-column: 1 / -1; }
+  .divider { border: none; border-top: 1px solid var(--line); margin: 18px 0; }
+
+  /* custom equation block */
+  .eq-wrap { display: grid; gap: 8px; }
+  .eq-input { font-family: var(--mono); font-size: 15px; }
+  .eq-input.bad { border-color: var(--red); box-shadow: 0 0 0 3px rgba(197, 66, 60, 0.15); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button {
+    font-family: var(--mono); font-size: 13px; color: var(--text);
+    background: #f1f4f9; border: 1px solid var(--line-strong); border-radius: 6px;
+    padding: 5px 9px; cursor: pointer; min-height: 0;
+  }
+  .chips button:hover { border-color: var(--blue); }
+  .eq-help { font-size: 12.5px; color: var(--muted); }
+  .eq-err { font-size: 13px; color: var(--red); min-height: 18px; font-weight: 600; }
+
+  /* preview */
+  .preview-label { font-size: 14px; color: var(--muted); margin: 4px 0 8px; }
+  .graph-wrap { position: relative; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  .graph-wrap svg { display: block; width: 100%; height: 300px; }
+
+  /* slew banner */
+  .banner {
+    display: flex; align-items: flex-start; gap: 10px; margin-top: 16px;
+    border-radius: 8px; padding: 12px 14px; font-size: 14px; line-height: 1.4;
+  }
+  .banner .icon { font-size: 16px; line-height: 1.2; flex: none; }
+  .banner.ok { background: var(--green-bg); border: 1px solid var(--green-line); color: var(--green-text); }
+  .banner.warn { background: var(--amber-bg); border: 1px solid var(--amber-line); color: var(--amber-text); }
+  .banner b { font-weight: 800; }
+
+  .foot { max-width: 1120px; margin: 14px auto 0; color: var(--muted); font-size: 12.5px; text-align: center; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="dialog">
+      <div class="modal-head">
+        <h2>Fatigue Waveform Builder</h2>
+        <span class="preview-tag">Preview - no hardware</span>
+      </div>
+      <div class="modal-body">
+
+        <div class="row">
+          <span class="lbl">Waveform</span>
+          <select id="preset" autocomplete="off">
+            <option value="sine">Sine</option>
+            <option value="square">Square</option>
+            <option value="triangle">Triangle</option>
+            <option value="sawtooth">Sawtooth</option>
+            <option value="bp" selected>Blood pressure</option>
+            <option value="custom">Custom equation</option>
+          </select>
+          <span class="val"></span>
+        </div>
+
+        <!-- dynamic parameter rows get built here -->
+        <div id="params"></div>
+
+        <!-- custom equation field (shown only for Custom) -->
+        <div id="eqRow" class="row" style="display:none">
+          <span class="lbl">Equation f(phase)</span>
+          <div class="eq-wrap full" style="grid-column: 2 / -1">
+            <input id="eq" class="eq-input" type="text" spellcheck="false" autocomplete="off"
+                   value="exp(-((phase-0.18)/0.07)^2) + 0.15*exp(-((phase-0.45)/0.11)^2)" />
+            <div class="chips" id="chips"></div>
+            <div class="eq-help">phase runs 0 to 1 across one cycle. Use sin, cos, exp, abs, sqrt, pi. The result is auto-scaled into Lower..Upper, so only the shape matters.</div>
+            <div class="eq-err" id="eqErr"></div>
+          </div>
+        </div>
+
+        <div class="row">
+          <span class="lbl">Number of cycles</span>
+          <input id="cycles" class="full" style="grid-column: 2 / -1" type="number" min="1" step="1" value="100" autocomplete="off" />
+        </div>
+
+        <hr class="divider" />
+        <div class="preview-label" id="previewLabel">Live preview - one cycle, force in newtons</div>
+        <div class="graph-wrap">
+          <svg id="graph" viewBox="0 0 980 300" role="img" aria-label="One cycle of the fatigue force waveform"></svg>
+        </div>
+
+        <div id="banner" class="banner ok"><span class="icon">&#10003;</span><span id="bannerText"></span></div>
+      </div>
+    </div>
+  </div>
+  <p class="foot">Standalone mockup. The waveform math is real, but nothing here connects to or moves hardware. The ~60 N/s actuator limit is a placeholder until it is measured on the rig. <span style="opacity:.6">build: parser v2 (custom equations supported)</span></p>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+
+  // Placeholder: the actuator's force slew rate (how fast it can change force).
+  // Real value must be measured on the rig (max speed x force-per-mm stiffness).
+  var ACT_SLEW_LIMIT = 60; // N/s
+  var FORCE_CEILING = 33;  // N, hard safety ceiling
+
+  // current parameter values (shared meaning across presets)
+  var state = { lower: 2, upper: 20, freqHz: 1.0, bpm: 60, notch: 0.10, sharp: 0.70, cycles: 100, eq: null };
+
+  // ---------- waveform shapes: phase 0..1 -> 0..1 ----------
+  function shape(preset, phase) {
+    switch (preset) {
+      case "square":   return phase < 0.5 ? 1 : 0;
+      case "triangle": return phase < 0.5 ? phase / 0.5 : (1 - phase) / 0.5;
+      case "sawtooth": return phase;
+      case "bp": {
+        // systolic gaussian (upstroke sharpness narrows it) + a dicrotic wave
+        var w = 0.13 - 0.09 * state.sharp;                 // sharper = narrower peak
+        var sys = Math.exp(-Math.pow((phase - 0.18) / w, 2));
+        var dic = state.notch * 2.2 * Math.exp(-Math.pow((phase - 0.45) / 0.11, 2));
+        return sys + dic;                                  // normalized later (can exceed 1)
+      }
+      case "custom":   return state.eq ? state.eq(phase) : 0;
+      case "sine":
+      default:         return 0.5 - 0.5 * Math.cos(2 * Math.PI * phase);
+    }
+  }
+
+  // sample one cycle, normalized so the shape spans 0..1 (so bounds set amplitude)
+  function sampleCycle(preset, n) {
+    var raw = new Array(n + 1), lo = Infinity, hi = -Infinity, i, v;
+    for (i = 0; i <= n; i++) {
+      v = shape(preset, i / n);
+      if (!isFinite(v)) v = 0;
+      raw[i] = v; if (v < lo) lo = v; if (v > hi) hi = v;
+    }
+    var span = (hi - lo) || 1;
+    for (i = 0; i <= n; i++) raw[i] = (raw[i] - lo) / span; // 0..1
+    return raw;
+  }
+
+  function freq() { return $("preset").value === "bp" ? state.bpm / 60 : state.freqHz; }
+
+  // ---------- safe equation compiler ----------
+  // A small recursive-descent parser. It compiles the text into nested closures
+  // (no eval, no Function constructor), so only known functions, the constants
+  // pi/e, and the variable phase/t can appear. It also gets operator precedence
+  // right: ^ binds tighter than a leading minus, so -(...)^2 means -((...)^2).
+  var FUNCS = {
+    sin: Math.sin, cos: Math.cos, tan: Math.tan, exp: Math.exp, abs: Math.abs,
+    sqrt: Math.sqrt, log: Math.log, sign: Math.sign, floor: Math.floor,
+    ceil: Math.ceil, round: Math.round
+  };
+  var CONSTS = { pi: Math.PI, e: Math.E };
+  var has = function (obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); };
+
+  function tokenize(s) {
+    var t = [], i = 0, n = s.length, isNum = /[0-9.]/, isIdA = /[a-zA-Z_]/, isId = /[a-zA-Z0-9_]/;
+    while (i < n) {
+      var c = s[i];
+      if (c === " " || c === "\t") { i++; continue; }
+      if (isNum.test(c)) { var j = i + 1; while (j < n && isNum.test(s[j])) j++; t.push({ t: "num", v: parseFloat(s.slice(i, j)) }); i = j; continue; }
+      if (isIdA.test(c)) { var j = i + 1; while (j < n && isId.test(s[j])) j++; t.push({ t: "name", v: s.slice(i, j) }); i = j; continue; }
+      if ("+-*/^()".indexOf(c) >= 0) { t.push({ t: "op", v: c }); i++; continue; }
+      throw new Error("illegal character: " + c);
+    }
+    return t;
+  }
+
+  function compileEquation(src) {
+    var toks = tokenize(src), pos = 0;
+    var peek = function () { return toks[pos]; };
+    var next = function () { return toks[pos++]; };
+    function expect(v) { var t = next(); if (!t || t.v !== v) throw new Error("expected " + v); }
+    function parseExpr() {
+      var n = parseTerm();
+      while (peek() && (peek().v === "+" || peek().v === "-")) { var op = next().v, r = parseTerm(); n = bin(op, n, r); }
+      return n;
+    }
+    function parseTerm() {
+      var n = parseUnary();
+      while (peek() && (peek().v === "*" || peek().v === "/")) { var op = next().v, r = parseUnary(); n = bin(op, n, r); }
+      return n;
+    }
+    function parseUnary() {
+      if (peek() && (peek().v === "-" || peek().v === "+")) { var op = next().v, u = parseUnary(); return op === "-" ? neg(u) : u; }
+      return parsePower();
+    }
+    function parsePower() {
+      var n = parsePrimary();
+      if (peek() && peek().v === "^") { next(); var r = parseUnary(); return bin("^", n, r); }
+      return n;
+    }
+    function parsePrimary() {
+      var t = next();
+      if (!t) throw new Error("unexpected end of equation");
+      if (t.t === "num") return function () { return t.v; };
+      if (t.t === "name") {
+        var nm = t.v.toLowerCase();
+        if (peek() && peek().v === "(") { if (!has(FUNCS, nm)) throw new Error("unknown function: " + t.v); next(); var a = parseExpr(); expect(")"); var f = FUNCS[nm]; return function (x) { return f(a(x)); }; }
+        if (nm === "phase" || nm === "t") return function (x) { return x; };
+        if (has(CONSTS, nm)) { var cv = CONSTS[nm]; return function () { return cv; }; }
+        throw new Error("unknown name: " + t.v);
+      }
+      if (t.v === "(") { var e = parseExpr(); expect(")"); return e; }
+      throw new Error("unexpected '" + t.v + "'");
+    }
+    function neg(a) { return function (x) { return -a(x); }; }
+    function bin(op, a, b) {
+      if (op === "+") return function (x) { return a(x) + b(x); };
+      if (op === "-") return function (x) { return a(x) - b(x); };
+      if (op === "*") return function (x) { return a(x) * b(x); };
+      if (op === "/") return function (x) { return a(x) / b(x); };
+      return function (x) { return Math.pow(a(x), b(x)); };
+    }
+    var fn = parseExpr();
+    if (pos < toks.length) throw new Error("unexpected '" + toks[pos].v + "'");
+    if (typeof fn(0.5) !== "number") throw new Error("not a number");
+    return fn;
+  }
+
+  // ---------- slider definitions per preset ----------
+  function paramDefs(preset) {
+    var p = [
+      { key: "lower", label: "Lower force" + (preset === "bp" ? " (diastolic)" : ""), min: 0, max: 32, step: 0.5, unit: "N" },
+      { key: "upper", label: "Upper force" + (preset === "bp" ? " (systolic)" : ""), min: 0, max: 32, step: 0.5, unit: "N" },
+    ];
+    if (preset === "bp") {
+      p.push({ key: "bpm", label: "Heart rate", min: 20, max: 180, step: 5, unit: "bpm" });
+      p.push({ key: "notch", label: "Dicrotic notch depth", min: 0, max: 0.4, step: 0.01, unit: "" });
+      p.push({ key: "sharp", label: "Upstroke sharpness", min: 0, max: 1, step: 0.05, unit: "" });
+    } else if (preset !== "custom") {
+      p.push({ key: "freqHz", label: "Frequency", min: 0.1, max: 5, step: 0.1, unit: "Hz" });
+    } else {
+      p.push({ key: "freqHz", label: "Frequency", min: 0.1, max: 5, step: 0.1, unit: "Hz" });
+    }
+    return p;
+  }
+
+  function fmt(v, step) { return (step < 1 ? v.toFixed(2) : v.toFixed(0)).replace(/\.00$/, ".0"); }
+
+  function buildParams() {
+    var preset = $("preset").value;
+    var host = $("params");
+    host.innerHTML = "";
+    paramDefs(preset).forEach(function (d) {
+      var row = document.createElement("div"); row.className = "row";
+      var lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = d.label;
+      var input = document.createElement("input");
+      input.type = "range"; input.autocomplete = "off";
+      input.min = d.min; input.max = d.max; input.step = d.step; input.value = state[d.key];
+      var val = document.createElement("span"); val.className = "val";
+      function paint() { val.textContent = fmt(Number(input.value), d.step) + (d.unit ? " " + d.unit : ""); }
+      input.addEventListener("input", function () {
+        state[d.key] = Number(input.value);
+        if (d.key === "lower" && state.lower > state.upper) { state.upper = state.lower; }
+        paint(); render();
+      });
+      paint();
+      row.appendChild(lbl); row.appendChild(input); row.appendChild(val);
+      host.appendChild(row);
+    });
+    $("eqRow").style.display = preset === "custom" ? "" : "none";
+    $("previewLabel").textContent = "Live preview - one cycle, force in newtons";
+  }
+
+  // ---------- drawing ----------
+  var W = 980, H = 300, padL = 70, padR = 24, padT = 26, padB = 40;
+  var plotW = W - padL - padR, plotH = H - padT - padB;
+
+  function draw(force) {
+    var lo = Math.min(state.lower, state.upper), hi = Math.max(state.lower, state.upper);
+    var yMin = Math.min(0, lo), yMax = Math.max(yMin + 1, hi);
+    var ySpan = yMax - yMin;
+    var toX = function (ph) { return padL + ph * plotW; };
+    var toY = function (f) { return H - padB - ((f - yMin) / ySpan) * plotH; };
+    var n = force.length - 1, d = "", i;
+    for (i = 0; i <= n; i++) d += (i === 0 ? "M" : "L") + toX(i / n).toFixed(2) + "," + toY(force[i]).toFixed(2);
+    var ff = getComputedStyle(document.body).fontFamily;
+    var mid = (yMin + yMax) / 2;
+    $("graph").innerHTML =
+      '<rect x="0" y="0" width="' + W + '" height="' + H + '" fill="#ffffff"></rect>' +
+      '<path d="M' + padL + ',' + padT + ' L' + padL + ',' + (H - padB) + ' L' + (W - padR) + ',' + (H - padB) + '" fill="none" stroke="#c7d1df" stroke-width="1"></path>' +
+      '<text x="' + (padL - 10) + '" y="' + (toY(yMax) + 4).toFixed(0) + '" text-anchor="end" fill="#697790" font-size="13" font-family="' + ff + '">' + yMax.toFixed(0) + ' N</text>' +
+      '<text x="' + (padL - 10) + '" y="' + (toY(mid) + 4).toFixed(0) + '" text-anchor="end" fill="#697790" font-size="13" font-family="' + ff + '">' + mid.toFixed(0) + ' N</text>' +
+      '<text x="' + (padL - 10) + '" y="' + (toY(yMin) + 4).toFixed(0) + '" text-anchor="end" fill="#697790" font-size="13" font-family="' + ff + '">' + yMin.toFixed(0) + ' N</text>' +
+      '<text x="' + (W / 2).toFixed(0) + '" y="' + (H - 8) + '" text-anchor="middle" fill="#697790" font-size="13" font-family="' + ff + '">one cycle, repeats ' + state.cycles + '&#215;</text>' +
+      '<path d="' + d + '" fill="none" stroke="#3f73e6" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path>';
+  }
+
+  // ---------- slew check ----------
+  function slewCheck(force) {
+    var f = freq(), period = 1 / f, n = force.length - 1, dt = period / n;
+    var maxSlew = 0, i, s;
+    for (i = 1; i <= n; i++) { s = Math.abs(force[i] - force[i - 1]) / dt; if (s > maxSlew) maxSlew = s; }
+    var banner = $("banner"), txt = $("bannerText");
+    if (maxSlew <= ACT_SLEW_LIMIT) {
+      banner.className = "banner ok";
+      banner.querySelector(".icon").innerHTML = "&#10003;";
+      txt.innerHTML = "The actuator can follow this: it needs about <b>" + Math.round(maxSlew) +
+        " N/s</b>, under the ~" + ACT_SLEW_LIMIT + " N/s limit.";
+    } else {
+      banner.className = "banner warn";
+      banner.querySelector(".icon").innerHTML = "&#9888;";
+      txt.innerHTML = "This needs about <b>" + Math.round(maxSlew) + " N/s</b> but the actuator tops out near " +
+        ACT_SLEW_LIMIT + " N/s, so the sharp parts will round off on the rig.";
+    }
+  }
+
+  // ---------- master render ----------
+  function render() {
+    var preset = $("preset").value;
+    // compile custom equation if needed
+    if (preset === "custom") {
+      try {
+        state.eq = compileEquation($("eq").value);
+        $("eq").classList.remove("bad"); $("eqErr").textContent = "";
+      } catch (err) {
+        state.eq = null; $("eq").classList.add("bad");
+        $("eqErr").textContent = "Cannot read that equation: " + err.message;
+        return; // leave the last good preview up
+      }
+    }
+    var norm = sampleCycle(preset, 400);
+    var lo = Math.min(state.lower, state.upper), hi = Math.max(state.lower, state.upper);
+    var force = norm.map(function (v) { return Math.min(FORCE_CEILING, lo + (hi - lo) * v); });
+    draw(force);
+    slewCheck(force);
+  }
+
+  // ---------- wire up ----------
+  function chip(label, insert) {
+    var b = document.createElement("button"); b.type = "button"; b.textContent = label;
+    b.addEventListener("click", function () {
+      var el = $("eq"), s = el.selectionStart || el.value.length, e = el.selectionEnd || el.value.length;
+      el.value = el.value.slice(0, s) + insert + el.value.slice(e);
+      el.focus(); el.selectionStart = el.selectionEnd = s + insert.length;
+      render();
+    });
+    return b;
+  }
+  ["phase", "sin(", "cos(", "exp(", "abs(", "sqrt(", "pi", "^", "(", ")"].forEach(function (c) {
+    $("chips").appendChild(chip(c, c));
+  });
+  $("preset").addEventListener("change", function () { buildParams(); render(); });
+  $("eq").addEventListener("input", render);
+  $("cycles").addEventListener("input", function () { state.cycles = Math.max(1, Math.floor(Number($("cycles").value || 1))); render(); });
+
+  $("preset").value = "bp";   // authoritative default (do not rely on browser form restore)
+  $("cycles").value = "100";
+  buildParams();
+  render();
+})();
+</script>
+</body>
+</html>
