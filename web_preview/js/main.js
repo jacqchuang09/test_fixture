@@ -783,13 +783,15 @@
         }
         if (cfg.test_type === "EM" || cfg.test_type === "Manual" || cfg.test_type === "Fatigue") {
           // A COM port must be selected to run a Zaber-driven test.
-          // TODO (future): require a SUCCESSFUL connection (connected === true), not
-          // just a selection. For now testing can proceed on the simulated stage and
-          // we only surface the connection error when a port fails to connect.
           if (!cfg.comport) {
             setMainMessage("Fill in Zaber COM Port before continuing", "error");
             return;
           }
+          // Re-check the live connection before opening the test window, using the
+          // same gate as Start. A port that connected earlier may have since been
+          // unplugged, so we must not proceed on a stale selection. Simulation stays
+          // soft (dev/demo runs still work); only a real connection failure blocks.
+          if (!(await zaberStartGateOk())) return;
         }
         let startResult = { ok: true, message: `Folder path: ${currentComputedTestFolder()}` };
         if (cfg.test_type !== "Fatigue") {
@@ -1056,9 +1058,22 @@
           if (cyclicalTestModal.open) drawCyclicalPreview();
         });
       });
-      ["saveFolder", "sensorType"].forEach((id) => {
+      ["sensorType"].forEach((id) => {
         document.getElementById(id).addEventListener("input", invalidateBasicSettings);
         document.getElementById(id).addEventListener("change", invalidateBasicSettings);
+      });
+      // Save Folder: when the user edits the path by typing, sync the stored base
+      // folder to what they typed. config() reverts the field to dataset.baseSaveFolder
+      // whenever they differ, so without this sync anything typed after a Browse
+      // selection (which sets baseSaveFolder) would be wiped on the next config() call.
+      ["input", "change"].forEach((evt) => {
+        document.getElementById("saveFolder").addEventListener(evt, () => {
+          const saveFolderInput = document.getElementById("saveFolder");
+          saveFolderInput.dataset.baseSaveFolder = saveFolderInput.value;
+          saveFolderInput.dataset.selectedTestFolder = "";
+          saveFolderInput.dataset.existingTestAction = "";
+          invalidateBasicSettings();
+        });
       });
       document.getElementById("runToRedo").addEventListener("change", () => {
         const value = document.getElementById("runToRedo").value;
