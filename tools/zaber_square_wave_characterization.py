@@ -37,7 +37,10 @@ FREQUENCIES_HZ = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0, 8.0]   # the sweep
 CYCLES = 6                 # cycles to run at each frequency
 SAMPLE_HZ = 200            # position-logging rate
 SETTLE_S = 0.4             # pause between frequencies
-TRAVEL_MIN_MM, TRAVEL_MAX_MM, MARGIN_MM = 17.0, 50.8, 0.5
+# Travel bounds the sweep must stay inside. 17 mm is home; 34 mm is the max
+# extrusion this fixture allows (NOT the 50.8 mm datasheet travel) - the square
+# wave is clamped so the actuator never commands past it.
+TRAVEL_MIN_MM, TRAVEL_MAX_MM, MARGIN_MM = 17.0, 34.0, 0.5
 MAX_SPEED_MM_S = 25.0      # datasheet max speed (used only by the --sim model)
 OUT_DIR = Path("zaber_characterization")
 

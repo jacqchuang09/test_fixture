@@ -372,9 +372,9 @@
                 <label>
                   <span class="sensor-header">
                     <span class="label-text">Drag Position Control (mm)</span>
-                    <span class="sensor-help" tabindex="0" data-tooltip="Drag to choose a target position from 17 mm baseline to 50.8 mm max (full actuator travel). The actuator only moves after Confirm Drag Move is pressed.">i</span>
+                    <span class="sensor-help" tabindex="0" data-tooltip="Drag to choose a target position from 17 mm baseline to 34 mm max (the extrusion limit for this fixture). The actuator only moves after Confirm Drag Move is pressed.">i</span>
                   </span>
-                  <input id="manualDragPosition" type="range" min="17" max="50.8" step="0.01" value="17" oninput="stageManualDragMove()" />
+                  <input id="manualDragPosition" type="range" min="17" max="34" step="0.01" value="17" oninput="stageManualDragMove()" />
                   <div id="manualDragReadout" class="manual-drag-readout">selected position: 17.0 mm. travel from baseline: 0.0 mm.</div>
                 </label>
                 <button id="manualConfirmDragButton" class="manual-confirm-button" onclick="confirmManualDragMove()" disabled>Confirm Drag Move</button>
