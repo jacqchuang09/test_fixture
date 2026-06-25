@@ -524,9 +524,14 @@ class Handler(SimpleHTTPRequestHandler):
 
         test_type = self.test_type_code(payload.get("test_type") or "EM")
         if test_type == "Shear" and payload.get("shear_readings"):
+            # Shear records force only. Capacitance is NEVER fabricated from force:
+            # the operator drops real CAP files into the CAP/ folder, and analysis
+            # prompts for them if they are missing (the shorted-channel check is a
+            # capacitance check). So write the FUT force file but no CAP - with the
+            # CAP folder empty, analysis returns the "add the capacitance file(s)"
+            # prompt instead of running on a fabricated capacitance signal.
             readings = self._clean_force_readings(payload.get("shear_readings"))
             self.write_reading_fut(fut_folder / "Run 1.csv", readings)
-            self.write_reading_cap(cap_folder / "Run 1.csv", readings)
             return
         if test_type == "Manual" and payload.get("manual_readings"):
             manual_points = self._clean_manual_readings(payload.get("manual_readings"))

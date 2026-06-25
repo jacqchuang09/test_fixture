@@ -230,7 +230,15 @@
           shear_readings: latestShearAnalysisData,
         }));
         document.getElementById("shearAnalysisButton").disabled = false;
-        if (!result.ok) return;
+        // missing capacitance (or other failure): show the message and stop, rather
+        // than opening an empty analysis window. The operator drops the CAP file(s)
+        // into the CAP/ folder and clicks Perform Analysis again.
+        if (!result || !result.ok) {
+          const msg = (result && result.message) || "Shear analysis could not run.";
+          setShearState("ERROR", msg);
+          showErrorDialog(msg, "Capacitance data needed");
+          return;
+        }
         setShearState("ANALYSIS", result.message || "shear analysis outputs saved.");
         populateShearAnalysis(result.analysis || null);
         shearAnalysisModal.showModal();
