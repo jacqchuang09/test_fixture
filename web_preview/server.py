@@ -522,6 +522,12 @@ class Handler(SimpleHTTPRequestHandler):
         cap_folder.mkdir(parents=True, exist_ok=True)
         self._write_test_meta(test_folder, payload)
 
+        # EM runs are captured in memory during the test; this is the point where they
+        # are written to disk (Perform Analysis is the first time any run file exists).
+        # No-op for tests that captured no runs.
+        from run_engine import ENGINE
+        ENGINE.flush_pending_runs(test_folder)
+
         test_type = self.test_type_code(payload.get("test_type") or "EM")
         if test_type == "Shear" and payload.get("shear_readings"):
             # Shear records force only. Capacitance is NEVER fabricated from force:

@@ -787,10 +787,14 @@
             setMainMessage("Fill in Zaber COM Port before continuing", "error");
             return;
           }
-          // Re-check the live connection before opening the test window, using the
-          // same gate as Start. A port that connected earlier may have since been
-          // unplugged, so we must not proceed on a stale selection. Simulation stays
-          // soft (dev/demo runs still work); only a real connection failure blocks.
+          // Actively re-test the Zaber connection now. A port that connected when it
+          // was selected may since have been unplugged, and the cached state would
+          // still read "connected". Re-opening the port (exactly what selecting it
+          // does) forces a fresh connect + device detect, so a disconnected actuator
+          // is caught here instead of being trusted from the earlier verification.
+          await callApi("/api/connect", { comport: cfg.comport });
+          // Then gate on that fresh result: hard-block on a real rig if nothing is
+          // connected, stay soft in simulation so dev/demo runs still work.
           if (!(await zaberStartGateOk())) return;
         }
         let startResult = { ok: true, message: `Folder path: ${currentComputedTestFolder()}` };
