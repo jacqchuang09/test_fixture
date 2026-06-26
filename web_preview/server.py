@@ -134,6 +134,12 @@ class Handler(SimpleHTTPRequestHandler):
             import os
             import futek_cli
             from run_engine import FUTEK_INIT_FAIL_MSG
+            # Refresh the real connection state first: ping the existing connection
+            # and only (re)open the port if there is no live one. Probing the live
+            # connection (instead of reopening a healthy port, which can transiently
+            # fail) is what stops a connected actuator being falsely reported as "no
+            # Zaber connected".
+            STATE.ensure_zaber_connected()
             connected = (STATE.cli is not None) and (not STATE.simulated)
             futek_ok = (not bool(os.environ.get("FORCE_SIM"))) and getattr(futek_cli, "_REAL_FUTEK_AVAILABLE", False)
             simulation = not futek_ok

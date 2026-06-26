@@ -10,6 +10,8 @@
 # dev Mac), every method falls back to a simulated axis so the browser preview
 # stays usable. Simulated responses are prefixed with [sim].
 
+import time
+
 from zaber_cli import ZaberCLI  # importable: config.py puts the repo root on sys.path
 
 HOME_MM = 17.0
@@ -174,6 +176,46 @@ class HardwareState:
                     "message": "No COM port has been selected yet."}
         # auto-reconnect must NOT redefine the reference (the actuator may be mid-run,
         # not at the baseline) - keep whatever reference the session already had.
+        return self.connect_zaber(self.comport, set_reference=False)
+
+    def ping_zaber(self):
+        # Liveness probe on the EXISTING connection: actually talk to the actuator
+        # (read its position) WITHOUT dropping/reopening the port. Reopening a port
+        # that is fine intermittently fails (the OS has not released the just-closed
+        # handle yet), which surfaced as a spurious "no Zaber connected" even when the
+        # stage was plugged in. Returns True if the actuator answers; a couple of quick
+        # retries ride over a transient blip (port busy) without masking a true
+        # disconnect. Updates the lost flags so the start gate reflects reality.
+        axis = self.axis
+        if axis is None:
+            return False
+        for attempt in range(3):
+            try:
+                self.position_mm = float(axis.get_position(_mm_unit()))
+                self._read_fail_count = 0
+                self.comms_lost = False
+                self.connection_lost = False
+                return True
+            except Exception:
+                if attempt < 2:
+                    time.sleep(0.05)
+        # The actuator did not answer on a connection we believed was live: it is gone.
+        self.comms_lost = True
+        self.connection_lost = True
+        return False
+
+    def ensure_zaber_connected(self):
+        # Verify the actuator is reachable for the start gate. Cheap path: if we
+        # already hold a connection and it still answers a ping, we are connected - do
+        # NOT reopen the port (reopening a healthy port can transiently fail and
+        # falsely report "no Zaber"). Only fall back to a full (re)connect when there
+        # is no live connection or it has gone silent.
+        if self.cli is not None and self.ping_zaber():
+            return {"ok": True, "connected": True, "comport": self.comport,
+                    "message": f"Connected to Zaber on {self.comport}."}
+        if not self.comport:
+            return {"ok": True, "connected": False, "comport": None,
+                    "message": "No COM port has been selected yet."}
         return self.connect_zaber(self.comport, set_reference=False)
 
     def move(self, comport, distance):

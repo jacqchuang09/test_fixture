@@ -787,15 +787,12 @@
             setMainMessage("Fill in Zaber COM Port before continuing", "error");
             return;
           }
-          // Actively re-test the Zaber connection now. A port that connected when it
-          // was selected may since have been unplugged, and the cached state would
-          // still read "connected". connectComPort re-opens the port (a fresh connect
-          // + device detect) AND refreshes the status message, so a now-connected port
-          // clears any stale "couldn't connect" error and a disconnected one shows the
-          // real reason - the message never lingers out of sync with reality.
-          await connectComPort();
-          // Then gate on that fresh result: hard-block on a real rig if nothing is
-          // connected, stay soft in simulation so dev/demo runs still work.
+          // Verify the Zaber is actually reachable before opening the test window.
+          // The gate's connection-check now probes the LIVE connection (a position
+          // read) and only reopens the port if there is no live one - so a port that
+          // is genuinely connected is never falsely reported as disconnected, and a
+          // real disconnect is still caught even though it was "verified" when the
+          // port was selected. Hard-block on a real rig; stay soft in simulation.
           if (!(await zaberStartGateOk())) return;
         }
         let startResult = { ok: true, message: `Folder path: ${currentComputedTestFolder()}` };
