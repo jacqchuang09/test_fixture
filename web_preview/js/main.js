@@ -789,10 +789,11 @@
           }
           // Actively re-test the Zaber connection now. A port that connected when it
           // was selected may since have been unplugged, and the cached state would
-          // still read "connected". Re-opening the port (exactly what selecting it
-          // does) forces a fresh connect + device detect, so a disconnected actuator
-          // is caught here instead of being trusted from the earlier verification.
-          await callApi("/api/connect", { comport: cfg.comport });
+          // still read "connected". connectComPort re-opens the port (a fresh connect
+          // + device detect) AND refreshes the status message, so a now-connected port
+          // clears any stale "couldn't connect" error and a disconnected one shows the
+          // real reason - the message never lingers out of sync with reality.
+          await connectComPort();
           // Then gate on that fresh result: hard-block on a real rig if nothing is
           // connected, stay soft in simulation so dev/demo runs still work.
           if (!(await zaberStartGateOk())) return;

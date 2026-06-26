@@ -218,10 +218,12 @@ class Handler(SimpleHTTPRequestHandler):
             import run_log
             from run_engine import ENGINE
             test_folder = self.test_folder_for_payload(payload)
-            ok_folder, folder_err = self._ensure_folder(test_folder)
-            if not ok_folder:
-                return {"ok": False, "message": folder_err}
-            self._write_test_meta(test_folder, payload)
+            # Do NOT create the test folder or write meta here: an EM test must leave
+            # nothing on disk until Perform Analysis. The folder, meta, run files, and
+            # run log are all written then (prepare_test_folder / flush_pending_runs).
+            # run_log.load handles a not-yet-created folder gracefully (empty log); the
+            # run number comes from the UI for a fresh test and from the existing run
+            # log for a redo (whose folder already exists).
             surface_area = self._float_from_text(payload.get("surface_area"), default=325.0)
             log = run_log.load(test_folder)
             redo_of = payload.get("redo_of")
