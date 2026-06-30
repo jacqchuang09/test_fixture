@@ -42,7 +42,66 @@ class Handler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == "/plot-file":
             return self.serve_plot_file(parse_qs(parsed.query))
+        if parsed.path == "/api/debug":
+            return self.serve_debug_json()
         return super().do_GET()
+
+    def serve_debug_json(self):
+        # Read-only snapshot of everything happening behind the scenes: the actuator
+        # state (STATE), the single-owner load cell (READER), and the run engine
+        # (ENGINE) including its live status and the in-memory EM run captures. The
+        # debug.html dashboard polls this a few times a second to render live state.
+        # This endpoint only READS shared state - it never moves hardware.
+        import threading as _threading
+        from run_engine import ENGINE, READER
+
+        pending = []
+        for num in sorted(ENGINE.pending_runs):
+            info = ENGINE.pending_runs[num] or {}
+            pending.append({
+                "run": num,
+                "samples": len(info.get("readings", []) or []),
+                "redo_of": info.get("redo_of"),
+                "reason": info.get("reason"),
+            })
+
+        payload = {
+            "ok": True,
+            "time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+            "zaber": {
+                "connected": STATE.cli is not None,
+                "simulated": STATE.simulated,
+                "comport": STATE.comport,
+                "position_mm": round(float(STATE.position_mm), 4),
+                "connection_lost": STATE.connection_lost,
+                "comms_lost": STATE.comms_lost,
+                "read_fail_count": STATE._read_fail_count,
+                "move_loop_active": STATE._move_loop_active,
+                "stop_requested": STATE.stop_requested,
+                "pause_requested": STATE.pause_requested,
+            },
+            "load_cell": {
+                "kind": READER.kind(),
+                "real_in_use": READER.real_in_use(),
+                "lost": READER.lost(),
+                "latest_raw": READER.latest_raw(),
+            },
+            "engine": {
+                "is_running": ENGINE.is_running(),
+                "live": ENGINE.status(),
+                "pending_runs": pending,
+            },
+            "threads": sorted(t.name for t in _threading.enumerate()),
+        }
+
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def serve_plot_file(self, query):
         raw = (query.get("path") or [""])[0]

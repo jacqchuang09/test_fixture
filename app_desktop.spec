@@ -12,6 +12,7 @@ block_cipher = None
 # The cli wrappers sit at the project root, which run_web_gui adds to sys.path.
 datas = [
     ("web_preview/index.html", "web_preview"),
+    ("web_preview/debug.html", "web_preview"),
     ("web_preview/styles.css", "web_preview"),
     ("web_preview/js", "web_preview/js"),
     ("web_preview/vendor/plotly.min.js", "web_preview/vendor"),
