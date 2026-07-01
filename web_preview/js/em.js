@@ -54,6 +54,7 @@
         return {
           seconds: Math.max(1, Number(document.getElementById("emSecondsToDisplay").value || 30)),
           cumulativeTime: document.getElementById("emCumulativeTime").checked,
+          showMarkers: document.getElementById("emShowMarkers").checked,
         };
       }
 
@@ -108,8 +109,8 @@
           const command = index === 0 ? "M" : "L";
           return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
         }).join(" ");
-        // a dot at every sample (the load cell is read at 100 Hz).
-        const markers = data.length > 1
+        // a dot at every sample (the load cell is read at 100 Hz); off by default.
+        const markers = settings.showMarkers && data.length > 1
           ? data.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="${color}"></circle>`).join("")
           : "";
         const legend = `<circle cx="${padLeft}" cy="34" r="5" fill="${color}"></circle><text x="${padLeft + 10}" y="38" fill="#697790" font-size="13" font-family="Inter, sans-serif">Run ${selectedRun}</text>`;
@@ -397,8 +398,8 @@
         await callApi("/api/stop", {});
         resetGraphZoom("emForceGraph");   // clear any scroll-zoom so the next window opens normal
         resetGraphAxisSettings(
-          { seconds: "emSecondsToDisplay", cumulative: "emCumulativeTime" },
-          { seconds: 30, cumulative: true });
+          { seconds: "emSecondsToDisplay", cumulative: "emCumulativeTime", showMarkers: "emShowMarkers" },
+          { seconds: 30, cumulative: true, showMarkers: false });
         emTestModal.close();
       }
 

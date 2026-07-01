@@ -283,6 +283,11 @@
               </span>
             </label>
             <label class="check">
+              <input id="emShowMarkers" type="checkbox" onchange="drawEmForceGraph()" />
+              <span>Show Markers</span>
+              <span class="sensor-help" tabindex="0" data-tooltip="Shows individual live force readings (one dot per sample) on top of the graph line. Off by default.">i</span>
+            </label>
+            <label class="check">
               <input id="emCumulativeTime" type="checkbox" checked onchange="drawEmForceGraph()" />
               <span>Cumulative Time</span>
               <span class="sensor-help" tabindex="0" data-tooltip="When on, the EM graph shows the entire run from start to finish and ignores Last Seconds to Display.">i</span>
@@ -648,9 +653,9 @@
             </span>
           </label>
           <label class="check">
-            <input id="showMarkers" type="checkbox" checked />
+            <input id="showMarkers" type="checkbox" />
             <span>Show Markers</span>
-            <span class="sensor-help" tabindex="0" data-tooltip="Shows individual live force readings on top of the graph line.">i</span>
+            <span class="sensor-help" tabindex="0" data-tooltip="Shows individual live force readings on top of the graph line. Off by default.">i</span>
           </label>
           <label class="check">
             <input id="cumulativeTime" type="checkbox" checked />
