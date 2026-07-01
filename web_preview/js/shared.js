@@ -910,13 +910,34 @@
       // place and their VALUES update to the new range - only the plotted curve rescales.
       const _graphZoom = {};   // svgId -> {xMin,xMax,yMin,yMax} data range while zoomed/panned
       const _graphView = {};   // svgId -> the effective range last drawn (for the handlers)
+      const _graphBounds = {}; // svgId -> outer range the zoom/pan may not go past
       const _graphReg = {};    // svgId -> {redraw, insets} for graphs that opted into zoom
 
-      // A drawer passes the DEFAULT range it computed and gets back the range to actually
-      // draw with (the zoomed range if the user has zoomed this graph, else the default).
-      // The result is cached so the wheel/pan handlers can map pixels to data coordinates.
-      function graphViewRange(svgId, def) {
-        const view = _graphZoom[svgId] || def;
+      // Keep a zoom/pan range inside the outer bounds (the full generated data) so the view
+      // can never scroll past what has actually been generated, nor zoom out wider than all
+      // of it. Width/height are capped to the bounds, then the range is shifted back inside.
+      function clampRange(v, b) {
+        if (!b) return v;
+        let { xMin, xMax, yMin, yMax } = v;
+        const bw = b.xMax - b.xMin, bh = b.yMax - b.yMin;
+        let w = xMax - xMin, h = yMax - yMin;
+        if (w > bw) { const c = (xMin + xMax) / 2; xMin = c - bw / 2; xMax = c + bw / 2; w = bw; }
+        if (h > bh) { const c = (yMin + yMax) / 2; yMin = c - bh / 2; yMax = c + bh / 2; h = bh; }
+        if (xMin < b.xMin) { xMin = b.xMin; xMax = b.xMin + w; }
+        if (xMax > b.xMax) { xMax = b.xMax; xMin = b.xMax - w; }
+        if (yMin < b.yMin) { yMin = b.yMin; yMax = b.yMin + h; }
+        if (yMax > b.yMax) { yMax = b.yMax; yMin = b.yMax - h; }
+        return { xMin, xMax, yMin, yMax };
+      }
+
+      // A drawer passes the DEFAULT range it computed (and optionally the OUTER bounds = the
+      // full generated data) and gets back the range to draw with: the zoomed range clamped
+      // to the bounds if the user has zoomed, else the default. The result is cached so the
+      // wheel/pan handlers can map pixels to data coordinates and clamp to the bounds.
+      function graphViewRange(svgId, def, bounds) {
+        const b = bounds || def;
+        _graphBounds[svgId] = b;
+        const view = _graphZoom[svgId] ? clampRange(_graphZoom[svgId], b) : def;
         _graphView[svgId] = view;
         return view;
       }
@@ -959,12 +980,12 @@
           e.preventDefault();
           const at = dataAt(reg.svg, reg.insets, e);
           const f = e.deltaY < 0 ? 0.85 : 1 / 0.85;   // wheel up = zoom in
-          _graphZoom[reg.svg.id] = {
+          _graphZoom[reg.svg.id] = clampRange({
             xMin: at.x - (at.x - view.xMin) * f,
             xMax: at.x + (view.xMax - at.x) * f,
             yMin: at.y - (at.y - view.yMin) * f,
             yMax: at.y + (view.yMax - at.y) * f,
-          };
+          }, _graphBounds[reg.svg.id]);
           reg.redraw();
         }, { passive: false });
         let pan = null;
@@ -986,10 +1007,10 @@
           const plotHpx = ((vb.height - pan.insets.top - pan.insets.bottom) / vb.height) * r.height;
           const dx = ((e.clientX - pan.x) / plotWpx) * (pan.base.xMax - pan.base.xMin);
           const dy = ((e.clientY - pan.y) / plotHpx) * (pan.base.yMax - pan.base.yMin);
-          _graphZoom[pan.id] = {
+          _graphZoom[pan.id] = clampRange({
             xMin: pan.base.xMin - dx, xMax: pan.base.xMax - dx,
             yMin: pan.base.yMin + dy, yMax: pan.base.yMax + dy,
-          };
+          }, _graphBounds[pan.id]);
           pan.redraw();
         });
         document.addEventListener("mouseup", () => {

@@ -50,6 +50,18 @@
         setEmStatus(emStatusLines);
       }
 
+      function emGraphSettings() {
+        return {
+          seconds: Math.max(1, Number(document.getElementById("emSecondsToDisplay").value || 30)),
+          cumulativeTime: document.getElementById("emCumulativeTime").checked,
+        };
+      }
+
+      function updateEmTimeControls() {
+        const secondsInput = document.getElementById("emSecondsToDisplay");
+        if (secondsInput) secondsInput.disabled = document.getElementById("emCumulativeTime").checked;
+      }
+
       function drawEmForceGraph() {
         const graph = document.getElementById("emForceGraph");
         if (!graph) return;
@@ -63,11 +75,16 @@
         const selectedRun = availableRuns.includes(emCurrentRun) ? emCurrentRun : (availableRuns[availableRuns.length - 1] || emCurrentRun);
         const runReadings = emReadings.filter((point) => point.run === selectedRun);
         const data = runReadings.length ? runReadings : [{ run: selectedRun, time: 0, force: 0 }];
-        // Default view: the whole run, force from 0. Scroll the wheel to zoom (the zoomed
-        // range comes back from graphViewRange); the axis frame stays put and re-labels.
+        updateEmTimeControls();
+        const settings = emGraphSettings();
+        // Default view: cumulative (whole run) or the last N seconds; scroll to zoom on top.
+        // Bounds are the full generated run, so zoom/pan can never go past what exists.
         const maxTime = Math.max(5, ...data.map((point) => point.time));
         const maxForce = Math.max(5, ...data.map((point) => point.force));
-        const view = graphViewRange("emForceGraph", { xMin: 0, xMax: maxTime, yMin: 0, yMax: Math.ceil(maxForce + 1) });
+        const fullYMax = Math.ceil(maxForce + 1);
+        const bounds = { xMin: 0, xMax: maxTime, yMin: 0, yMax: fullYMax };
+        const defXMin = settings.cumulativeTime ? 0 : Math.max(0, maxTime - settings.seconds);
+        const view = graphViewRange("emForceGraph", { xMin: defXMin, xMax: maxTime, yMin: 0, yMax: fullYMax }, bounds);
         const color = "#3f73e6";
         const plotWidth = width - padLeft - padRight;
         const plotHeight = height - padTop - padBottom;
@@ -379,6 +396,9 @@
         stopReconnectWatch();
         await callApi("/api/stop", {});
         resetGraphZoom("emForceGraph");   // clear any scroll-zoom so the next window opens normal
+        resetGraphAxisSettings(
+          { seconds: "emSecondsToDisplay", cumulative: "emCumulativeTime" },
+          { seconds: 30, cumulative: true });
         emTestModal.close();
       }
 

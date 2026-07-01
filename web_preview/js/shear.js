@@ -174,7 +174,9 @@
         const timeSpan = settings.cumulativeTime ? Math.max(1, latest - startTime, 5) : Math.max(1, settings.seconds);
         // Default view from the settings controls; scroll the wheel to zoom the data
         // (graphViewRange returns the zoomed range), with the axis frame staying in place.
-        const view = graphViewRange("shearGraph", { xMin: startTime, xMax: startTime + timeSpan, yMin: settings.yMin, yMax: settings.yLimit });
+        // Bounds are the full generated run, so zoom/pan can never go past what exists.
+        const bounds = { xMin: 0, xMax: Math.max(startTime + timeSpan, latest, 5), yMin: settings.yMin, yMax: settings.yLimit };
+        const view = graphViewRange("shearGraph", { xMin: startTime, xMax: startTime + timeSpan, yMin: settings.yMin, yMax: settings.yLimit }, bounds);
         const data = shearData.length ? shearData : [{ time: startTime, force: settings.yMin }];
         const plotWidth = width - padLeft - padRight;
         const plotHeight = height - padTop - padBottom;
