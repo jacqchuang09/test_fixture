@@ -1539,7 +1539,7 @@
 
       .manual-analysis-row {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 10px;
         margin-bottom: 12px;
       }
