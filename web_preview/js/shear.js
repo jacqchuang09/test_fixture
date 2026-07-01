@@ -66,6 +66,10 @@
           await callApi("/api/stop", {});
         }
         stopReconnectWatch();
+        // Restore the graph axis controls to defaults so the next shear window opens normal.
+        resetGraphAxisSettings(
+          { seconds: "secondsToDisplay", yMin: "yAxisMin", yLimit: "yAxisLimit", showMarkers: "showMarkers", cumulative: "cumulativeTime" },
+          { seconds: 30, yMin: 0, yLimit: 5, showMarkers: true, cumulative: true });
         shearTestModal.close();
       }
 

@@ -137,6 +137,10 @@
           await callApi("/api/stop", {});
         }
         stopManualSampling();                  // stop the background force poll on close
+        // Restore the graph axis controls to defaults so the next manual window opens normal.
+        resetGraphAxisSettings(
+          { seconds: "manualSecondsToDisplay", yMin: "manualYAxisMin", yLimit: "manualYAxisLimit", showMarkers: "manualShowMarkers", cumulative: "manualCumulativeTime" },
+          { seconds: 30, yMin: 0, yLimit: 50, showMarkers: true, cumulative: true });
         manualTestModal.close();
       }
 

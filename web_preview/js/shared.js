@@ -754,7 +754,7 @@
         return `${minutes} min`;
       }
 
-      function drawWaveformSvg(svgId, points, xKey, yKey, xLabel, yLabel, yMin, yMax, xMax) {
+      function drawWaveformSvg(svgId, points, xKey, yKey, xLabel, yLabel, yMin, yMax, xMax, xMin = 0) {
         const graph = document.getElementById(svgId);
         const width = 960;
         const height = 340;
@@ -765,11 +765,14 @@
         const plotWidth = width - padLeft - padRight;
         const plotHeight = height - padTop - padBottom;
         const ySpan = Math.max(1, yMax - yMin);
-        const toX = (value) => padLeft + (value / Math.max(1, xMax)) * plotWidth;
+        // xMin lets callers show a rolling "last N seconds" window instead of the whole
+        // series (defaults to 0, so existing callers are unaffected).
+        const xSpan = Math.max(1, xMax - xMin);
+        const toX = (value) => padLeft + ((value - xMin) / xSpan) * plotWidth;
         const toY = (value) => height - padBottom - ((value - yMin) / ySpan) * plotHeight;
         const zeroY = toY(0);
         const axisY = height - padBottom;
-        const xTicks = xAxisTicks(0, Math.max(1, xMax), toX, axisY, xLabel.toLowerCase().includes("time") ? "s" : "");
+        const xTicks = xAxisTicks(xMin, Math.max(xMin + 1, xMax), toX, axisY, xLabel.toLowerCase().includes("time") ? "s" : "");
         const path = points.map((point, index) => {
           const command = index === 0 ? "M" : "L";
           return `${command}${toX(point[xKey]).toFixed(2)},${toY(point[yKey]).toFixed(2)}`;
@@ -791,6 +794,24 @@
           <text x="${padLeft - 12}" y="${padTop + 5}" text-anchor="end" fill="#697790" font-size="13" font-family="Inter, sans-serif">${yMax.toFixed(1)}</text>
           <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
         `;
+      }
+
+      // Reset a live-graph window's axis controls back to their defaults. Called from
+      // each test window's close handler so the y-axis / time-window limits an operator
+      // set do not carry over to the next time the window is opened. `ids` maps the five
+      // control roles to element ids (any missing role is skipped, e.g. fatigue has no
+      // Show Markers control); `defaults` holds the value to restore for each.
+      function resetGraphAxisSettings(ids, defaults) {
+        const set = (id, value) => {
+          const el = id && document.getElementById(id);
+          if (!el || value === undefined) return;
+          if (el.type === "checkbox") el.checked = value; else el.value = value;
+        };
+        set(ids.seconds, defaults.seconds);
+        set(ids.yMin, defaults.yMin);
+        set(ids.yLimit, defaults.yLimit);
+        set(ids.showMarkers, defaults.showMarkers);
+        set(ids.cumulative, defaults.cumulative);
       }
 
       function drawMiniGraph(canvasId, points, xKey, yKey, xLabel, yLabel, settings = null) {

@@ -50,9 +50,28 @@
         setEmStatus(emStatusLines);
       }
 
+      function emGraphSettings() {
+        const yMin = Number(document.getElementById("emYAxisMin").value || 0);
+        const yLimit = Number(document.getElementById("emYAxisLimit").value || 35);
+        return {
+          seconds: Math.max(1, Number(document.getElementById("emSecondsToDisplay").value || 30)),
+          yMin,
+          yLimit: Math.max(yMin + 1, yLimit),
+          showMarkers: document.getElementById("emShowMarkers").checked,
+          cumulativeTime: document.getElementById("emCumulativeTime").checked,
+        };
+      }
+
+      function updateEmTimeControls() {
+        const secondsInput = document.getElementById("emSecondsToDisplay");
+        if (secondsInput) secondsInput.disabled = document.getElementById("emCumulativeTime").checked;
+      }
+
       function drawEmForceGraph() {
         const graph = document.getElementById("emForceGraph");
         if (!graph) return;
+        updateEmTimeControls();
+        const settings = emGraphSettings();
         const width = 960;
         const height = 330;
         const padLeft = 92;
@@ -61,38 +80,40 @@
         const padRight = 24;
         const availableRuns = [...new Set(emReadings.map((point) => point.run))].sort((a, b) => a - b);
         const selectedRun = availableRuns.includes(emCurrentRun) ? emCurrentRun : (availableRuns[availableRuns.length - 1] || emCurrentRun);
-        const visibleReadings = emReadings.filter((point) => point.run === selectedRun);
-        const data = visibleReadings.length ? visibleReadings : [{ run: selectedRun, time: 0, force: 0 }];
-        const runNumbers = [...new Set(data.map((point) => point.run))].sort((a, b) => a - b);
-        const colors = ["#3f73e6", "#3f8b42", "#e11955", "#8b5cf6", "#ed6c02", "#0891b2"];
-        const maxTime = Math.max(5, ...data.map((point) => point.time));
-        const maxForce = Math.max(5, ...data.map((point) => point.force));
-        const yMin = 0;
-        const yMax = Math.ceil(maxForce + 1);
+        const runReadings = emReadings.filter((point) => point.run === selectedRun);
+        const latest = runReadings.length ? Math.max(...runReadings.map((point) => point.time)) : 0;
+        // x-axis window: whole run (cumulative) or the last N seconds of it.
+        const startTime = settings.cumulativeTime ? 0 : Math.max(0, latest - settings.seconds);
+        const visible = runReadings.filter((point) => point.time >= startTime);
+        const data = visible.length ? visible : [{ run: selectedRun, time: startTime, force: settings.yMin }];
+        const color = "#3f73e6";
         const plotWidth = width - padLeft - padRight;
         const plotHeight = height - padTop - padBottom;
-        const toX = (time) => padLeft + (time / maxTime) * plotWidth;
-        const toY = (force) => height - padBottom - ((force - yMin) / (yMax - yMin)) * plotHeight;
+        const timeSpan = settings.cumulativeTime ? Math.max(1, latest - startTime, 5) : Math.max(1, settings.seconds);
+        const ySpan = settings.yLimit - settings.yMin;
+        const toX = (time) => padLeft + ((time - startTime) / timeSpan) * plotWidth;
+        const toY = (force) => height - padBottom - ((force - settings.yMin) / ySpan) * plotHeight;
         const axisY = height - padBottom;
-        const xTicks = xAxisTicks(0, maxTime, toX, axisY, "s");
-        const runPaths = runNumbers.map((runNumber, runIndex) => {
-          const runData = data.filter((point) => point.run === runNumber);
-          const path = runData.map((point, index) => {
-            const command = index === 0 ? "M" : "L";
-            return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
-          }).join(" ");
-          const color = colors[runIndex % colors.length];
-          // a dot at every sample (the load cell is read at 100 Hz).
-          const markers = runData.length > 1
-            ? runData.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="${color}"></circle>`).join("")
-            : "";
-          return `<path d="${path}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>${markers}`;
+        const xTicks = xAxisTicks(startTime, startTime + timeSpan, toX, axisY, "s");
+        const yTickCount = 5;
+        const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) => {
+          const value = settings.yMin + (ySpan * index) / yTickCount;
+          const y = toY(value);
+          return `
+            <line x1="${padLeft - 5}" y1="${y.toFixed(2)}" x2="${padLeft}" y2="${y.toFixed(2)}" stroke="#c7d1df" stroke-width="1"></line>
+            <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${width - padRight}" y2="${y.toFixed(2)}" stroke="#edf2f7" stroke-width="1"></line>
+            <text x="${padLeft - 12}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${value.toFixed(value >= 10 ? 0 : 1)}</text>
+          `;
         }).join("");
-        const legend = runNumbers.map((runNumber, runIndex) => {
-          const x = padLeft + runIndex * 92;
-          const color = colors[runIndex % colors.length];
-          return `<circle cx="${x}" cy="34" r="5" fill="${color}"></circle><text x="${x + 10}" y="38" fill="#697790" font-size="13" font-family="Inter, sans-serif">Run ${runNumber}</text>`;
-        }).join("");
+        const path = data.map((point, index) => {
+          const command = index === 0 ? "M" : "L";
+          return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
+        }).join(" ");
+        // a dot at every sample (the load cell is read at 100 Hz).
+        const markers = settings.showMarkers && data.length > 1
+          ? data.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="${color}"></circle>`).join("")
+          : "";
+        const legend = `<circle cx="${padLeft}" cy="34" r="5" fill="${color}"></circle><text x="${padLeft + 10}" y="38" fill="#697790" font-size="13" font-family="Inter, sans-serif">Run ${selectedRun}</text>`;
         setGraphHoverPoints("emForceGraph", data.map((point) => ({
           x: toX(point.time),
           y: toY(point.force),
@@ -102,13 +123,13 @@
         graph.innerHTML = `
           <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>
           <path d="M${padLeft},${padTop} L${padLeft},${height - padBottom} L${width - padRight},${height - padBottom}" fill="none" stroke="#c7d1df" stroke-width="1"></path>
+          ${yTicks}
           ${xTicks}
           <text x="${padLeft}" y="18" fill="#697790" font-size="15" font-family="Inter, sans-serif">Force (N)</text>
           <text x="${width / 2 - 55}" y="${height - 12}" fill="#697790" font-size="15" font-family="Inter, sans-serif">Time (s)</text>
-          <text x="${padLeft - 12}" y="${height - padBottom + 5}" text-anchor="end" fill="#697790" font-size="13" font-family="Inter, sans-serif">${yMin.toFixed(0)}</text>
-          <text x="${padLeft - 12}" y="${padTop + 5}" text-anchor="end" fill="#697790" font-size="13" font-family="Inter, sans-serif">${yMax.toFixed(0)}</text>
           ${legend}
-          ${runPaths}
+          <path d="${path}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+          ${markers}
         `;
       }
 
@@ -371,6 +392,10 @@
         }
         stopReconnectWatch();
         await callApi("/api/stop", {});
+        // Restore the graph axis controls to defaults so the next EM window opens normal.
+        resetGraphAxisSettings(
+          { seconds: "emSecondsToDisplay", yMin: "emYAxisMin", yLimit: "emYAxisLimit", showMarkers: "emShowMarkers", cumulative: "emCumulativeTime" },
+          { seconds: 30, yMin: 0, yLimit: 35, showMarkers: true, cumulative: true });
         emTestModal.close();
       }
 
