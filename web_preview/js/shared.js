@@ -114,6 +114,10 @@
       let manualClockStart = 0;
       let manualLiveForce = 0;
       let manualSampleTimer = null;
+      // false until the operator presses Start in the manual window. Start is the
+      // connection checkpoint AND what turns on the live force readout/recording, so
+      // nothing samples, moves, or records until then (see manual.js startManualTest).
+      let manualStarted = false;
       let cyclicalData = [];
       let cyclicalTimer = null;
       let cyclicalReturnHomeTimer = null;

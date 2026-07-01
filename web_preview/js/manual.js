@@ -31,6 +31,7 @@
           clearInterval(manualMotionTimer);
           manualMotionTimer = null;
         }
+        stopManualSampling();                  // no live readout until Start is pressed
         manualData = [];
         manualClockStart = performance.now();   // continuous clock for Force/Cap vs Time
         manualLiveForce = 0;
@@ -39,14 +40,47 @@
         manualStatusLines = [];
         document.getElementById("manualDragPosition").value = 17;
         document.getElementById("manualDragReadout").textContent = "selected position: 17.0 mm. travel from baseline: 0.0 mm.";
-        document.getElementById("manualConfirmDragButton").disabled = true;
-        document.getElementById("manualPauseButton").disabled = true;
-        document.getElementById("manualAnalysisButton").disabled = true;
-        setManualControlsLocked(false);
+        // Idle / armed: only Start and the setup inputs are usable. Start is the
+        // connection checkpoint and what turns on the live force readout (startManualTest);
+        // nothing samples, moves, or records until then, so the graph opens empty.
+        setManualSessionActive(false);
         updateManualControlMode();
-        setManualState("READY", "manual controls ready. baseline position is 17 mm.");
-        addManualPoint(0, 0);
+        setManualState("READY", "press Start to begin the live force readout.");
         drawManualGraphs();
+      }
+
+      // Toggle the manual window between armed (pre-Start) and active (post-Start).
+      // Pre-Start: only Start and the setup inputs work - nothing can move or record.
+      // Post-Start: motion + analysis are live and Start is disabled. Pause and Confirm
+      // Drag stay gated on their own conditions (a running move / a staged drag), so
+      // they are left disabled here.
+      function setManualSessionActive(active) {
+        manualStarted = active;
+        document.getElementById("manualStartButton").disabled = active;
+        ["manualReleaseButton", "manualCompressionButton", "manualHomeButton"].forEach((id) => {
+          const element = document.getElementById(id);
+          if (element) element.disabled = !active;
+        });
+        document.getElementById("manualPauseButton").disabled = true;
+        document.getElementById("manualAnalysisButton").disabled = !active;
+        document.getElementById("manualConfirmDragButton").disabled = true;
+        const forceMode = manualControlMode() === "force";
+        document.getElementById("manualDragPosition").disabled = !active || forceMode;
+      }
+
+      // Start is the connection checkpoint AND what turns on the live force readout.
+      // On a real rig it requires a live Zaber (shows the reconnect/connect message on
+      // failure); it stays soft in simulation. On pass it begins a fresh recorded trace
+      // from t=0, starts sampling/plotting force, and unlocks the manual controls.
+      async function startManualTest() {
+        if (manualStarted) return;
+        if (!(await zaberStartGateOk())) return;
+        manualData = [];
+        manualClockStart = performance.now();
+        manualLiveForce = 0;
+        setManualSessionActive(true);
+        updateManualControlMode();
+        setManualState("RECORDING", "live force readout started. manual controls ready.");
         startManualSampling();
       }
 
@@ -102,6 +136,7 @@
           if (!ok) return;
           await callApi("/api/stop", {});
         }
+        stopManualSampling();                  // stop the background force poll on close
         manualTestModal.close();
       }
 
@@ -175,8 +210,8 @@
         document.getElementById("manualCompressionButton").textContent = isForceMode ? "↓ Start Compression" : "↓ MOVE DOWN";
         document.getElementById("manualHomeButton").textContent = isForceMode ? "↻ Home" : "↻ HOME";
         document.getElementById("manualDragCard").classList.toggle("disabled", isForceMode);
-        document.getElementById("manualDragPosition").disabled = isForceMode || locked;
-        document.getElementById("manualConfirmDragButton").disabled = isForceMode || locked || Math.abs(manualPendingPosition - manualPosition) < 0.001;
+        document.getElementById("manualDragPosition").disabled = isForceMode || locked || !manualStarted;
+        document.getElementById("manualConfirmDragButton").disabled = isForceMode || locked || !manualStarted || Math.abs(manualPendingPosition - manualPosition) < 0.001;
         if (isForceMode) {
           document.getElementById("manualDragReadout").textContent = "drag position control disabled while force control is selected.";
         } else {
@@ -199,6 +234,10 @@
           return;
         }
         if (isManualMoving()) return;
+        // Per-press connection checkpoint: re-confirm the live Zaber before every
+        // manual move, the same gate Begin Test and each EM run use. On a real rig a
+        // dropped connection blocks the move with the reconnect message.
+        if (!(await zaberStartGateOk())) return;
         // Lock all controls for the whole move and poll the backend for live
         // force/position - it streams real readings into the run status as it steps
         // the actuator, so the graphs update live (no faked values, no fixed timer).
@@ -265,6 +304,8 @@
       // controls and polls /api/run-status the same way the distance move does.
       async function recordManualForceMove(targetForce, direction, description) {
         if (isManualMoving()) return;
+        // Per-press connection checkpoint, same as the distance move above.
+        if (!(await zaberStartGateOk())) return;
         setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
         setManualState("WAITING TO START", "initializing load cell - please wait…");
@@ -351,7 +392,7 @@
       }
 
       function stageManualDragMove() {
-        if (manualControlMode() === "force" || isManualMoving()) return;
+        if (!manualStarted || manualControlMode() === "force" || isManualMoving()) return;
         manualPendingPosition = Number(document.getElementById("manualDragPosition").value || 17);
         const delta = manualPendingPosition - manualPosition;
         document.getElementById("manualDragReadout").textContent = `selected position: ${manualPendingPosition.toFixed(1)} mm. travel from baseline: ${(manualPendingPosition - 17).toFixed(1)} mm. pending move: ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} mm.`;
@@ -447,6 +488,11 @@
           showErrorDialog("No manual test data available to analyze", "No data to analyze");
           return;
         }
+        // Perform Analysis is the end of the recording boundary: stop the live readout
+        // and re-arm Start so the next session begins cleanly. The frozen trace below
+        // is what gets analyzed.
+        stopManualSampling();
+        setManualSessionActive(false);
         document.getElementById("manualAnalysisButton").disabled = true;
         const result = await runAnalysisProgress("Generating manual analysis outputs...", () => callApi("/api/perform-analysis", {
           manual_readings: manualData,
