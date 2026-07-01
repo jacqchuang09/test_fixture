@@ -78,26 +78,11 @@
         estimate.textContent = `This test will take approximately ${formatDuration(cyclicalEstimatedSeconds())}.`;
       }
 
-      function cyclicalGraphSettings() {
-        const yMin = Number(document.getElementById("cyclicalYAxisMin").value || 0);
-        const yLimit = Number(document.getElementById("cyclicalYAxisLimit").value || 35);
-        return {
-          seconds: Math.max(1, Number(document.getElementById("cyclicalSecondsToDisplay").value || 30)),
-          yMin,
-          yLimit: Math.max(yMin + 1, yLimit),
-          cumulativeTime: document.getElementById("cyclicalCumulativeTime").checked,
-        };
-      }
-
-      function updateCyclicalTimeControls() {
-        const secondsInput = document.getElementById("cyclicalSecondsToDisplay");
-        if (secondsInput) secondsInput.disabled = document.getElementById("cyclicalCumulativeTime").checked;
-      }
-
       function drawCyclicalPreview() {
         const cfg = config();
         const waveformType = cfg.waveform_type;
         const { lowerForce, upperForce, isValid } = cyclicalBounds();
+        const lowForce = Math.min(lowerForce, upperForce);
         const highForce = Math.max(lowerForce, upperForce);
         const frequency = Math.max(0.01, cfg.waveform_frequency);
         const period = 1 / frequency;
@@ -121,20 +106,11 @@
           }
           setStatePill("cyclicalState", isValid ? "READY" : "ERROR", message);
         }
-        updateCyclicalTimeControls();
-        const settings = cyclicalGraphSettings();
-        // x-axis window: whole run (cumulative) or the last N seconds of it.
-        const latest = points.length ? points[points.length - 1].time : duration;
-        let xMin = 0;
-        let xMax = Math.max(1, duration);
-        let visible = points;
-        if (!settings.cumulativeTime) {
-          xMin = Math.max(0, latest - settings.seconds);
-          xMax = xMin + settings.seconds;
-          visible = points.filter((point) => point.time >= xMin);
-          if (!visible.length) visible = [{ time: xMin, force: settings.yMin }];
-        }
-        drawWaveformSvg("cyclicalGraph", visible, "time", "force", "Time (s)", "Force (N)", settings.yMin, settings.yLimit, xMax, xMin);
+        // Default view: full waveform, y around the configured bounds. Scroll the wheel to
+        // zoom (the zoomed range comes back from graphViewRange); the axis frame stays put.
+        const view = graphViewRange("cyclicalGraph", { xMin: 0, xMax: Math.max(1, duration), yMin: Math.min(0, lowForce), yMax: Math.max(1, highForce) });
+        drawWaveformSvg("cyclicalGraph", points, "time", "force", "Time (s)", "Force (N)", view.yMin, view.yMax, view.xMax, view.xMin);
+        registerZoomGraph("cyclicalGraph", drawCyclicalPreview, { left: 92, right: 24, top: 58, bottom: 52 });
         updateCyclicalEstimate();
       }
 
@@ -154,10 +130,7 @@
           await callApi("/api/stop", {});
         }
         stopReconnectWatch();
-        // Restore the graph axis controls to defaults so the next fatigue window opens normal.
-        resetGraphAxisSettings(
-          { seconds: "cyclicalSecondsToDisplay", yMin: "cyclicalYAxisMin", yLimit: "cyclicalYAxisLimit", cumulative: "cyclicalCumulativeTime" },
-          { seconds: 30, yMin: 0, yLimit: 35, cumulative: true });
+        resetGraphZoom("cyclicalGraph");   // clear any scroll-zoom so the next window opens normal
         cyclicalTestModal.close();
       }
 

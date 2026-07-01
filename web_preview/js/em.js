@@ -50,28 +50,9 @@
         setEmStatus(emStatusLines);
       }
 
-      function emGraphSettings() {
-        const yMin = Number(document.getElementById("emYAxisMin").value || 0);
-        const yLimit = Number(document.getElementById("emYAxisLimit").value || 35);
-        return {
-          seconds: Math.max(1, Number(document.getElementById("emSecondsToDisplay").value || 30)),
-          yMin,
-          yLimit: Math.max(yMin + 1, yLimit),
-          showMarkers: document.getElementById("emShowMarkers").checked,
-          cumulativeTime: document.getElementById("emCumulativeTime").checked,
-        };
-      }
-
-      function updateEmTimeControls() {
-        const secondsInput = document.getElementById("emSecondsToDisplay");
-        if (secondsInput) secondsInput.disabled = document.getElementById("emCumulativeTime").checked;
-      }
-
       function drawEmForceGraph() {
         const graph = document.getElementById("emForceGraph");
         if (!graph) return;
-        updateEmTimeControls();
-        const settings = emGraphSettings();
         const width = 960;
         const height = 330;
         const padLeft = 92;
@@ -81,28 +62,29 @@
         const availableRuns = [...new Set(emReadings.map((point) => point.run))].sort((a, b) => a - b);
         const selectedRun = availableRuns.includes(emCurrentRun) ? emCurrentRun : (availableRuns[availableRuns.length - 1] || emCurrentRun);
         const runReadings = emReadings.filter((point) => point.run === selectedRun);
-        const latest = runReadings.length ? Math.max(...runReadings.map((point) => point.time)) : 0;
-        // x-axis window: whole run (cumulative) or the last N seconds of it.
-        const startTime = settings.cumulativeTime ? 0 : Math.max(0, latest - settings.seconds);
-        const visible = runReadings.filter((point) => point.time >= startTime);
-        const data = visible.length ? visible : [{ run: selectedRun, time: startTime, force: settings.yMin }];
+        const data = runReadings.length ? runReadings : [{ run: selectedRun, time: 0, force: 0 }];
+        // Default view: the whole run, force from 0. Scroll the wheel to zoom (the zoomed
+        // range comes back from graphViewRange); the axis frame stays put and re-labels.
+        const maxTime = Math.max(5, ...data.map((point) => point.time));
+        const maxForce = Math.max(5, ...data.map((point) => point.force));
+        const view = graphViewRange("emForceGraph", { xMin: 0, xMax: maxTime, yMin: 0, yMax: Math.ceil(maxForce + 1) });
         const color = "#3f73e6";
         const plotWidth = width - padLeft - padRight;
         const plotHeight = height - padTop - padBottom;
-        const timeSpan = settings.cumulativeTime ? Math.max(1, latest - startTime, 5) : Math.max(1, settings.seconds);
-        const ySpan = settings.yLimit - settings.yMin;
-        const toX = (time) => padLeft + ((time - startTime) / timeSpan) * plotWidth;
-        const toY = (force) => height - padBottom - ((force - settings.yMin) / ySpan) * plotHeight;
+        const xSpan = Math.max(1e-6, view.xMax - view.xMin);
+        const ySpan = Math.max(1e-6, view.yMax - view.yMin);
+        const toX = (time) => padLeft + ((time - view.xMin) / xSpan) * plotWidth;
+        const toY = (force) => height - padBottom - ((force - view.yMin) / ySpan) * plotHeight;
         const axisY = height - padBottom;
-        const xTicks = xAxisTicks(startTime, startTime + timeSpan, toX, axisY, "s");
+        const xTicks = xAxisTicks(view.xMin, view.xMax, toX, axisY, "s");
         const yTickCount = 5;
         const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) => {
-          const value = settings.yMin + (ySpan * index) / yTickCount;
+          const value = view.yMin + (ySpan * index) / yTickCount;
           const y = toY(value);
           return `
             <line x1="${padLeft - 5}" y1="${y.toFixed(2)}" x2="${padLeft}" y2="${y.toFixed(2)}" stroke="#c7d1df" stroke-width="1"></line>
             <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${width - padRight}" y2="${y.toFixed(2)}" stroke="#edf2f7" stroke-width="1"></line>
-            <text x="${padLeft - 12}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${value.toFixed(value >= 10 ? 0 : 1)}</text>
+            <text x="${padLeft - 12}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${value.toFixed(Math.abs(value) >= 10 ? 0 : 1)}</text>
           `;
         }).join("");
         const path = data.map((point, index) => {
@@ -110,7 +92,7 @@
           return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
         }).join(" ");
         // a dot at every sample (the load cell is read at 100 Hz).
-        const markers = settings.showMarkers && data.length > 1
+        const markers = data.length > 1
           ? data.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="${color}"></circle>`).join("")
           : "";
         const legend = `<circle cx="${padLeft}" cy="34" r="5" fill="${color}"></circle><text x="${padLeft + 10}" y="38" fill="#697790" font-size="13" font-family="Inter, sans-serif">Run ${selectedRun}</text>`;
@@ -128,9 +110,13 @@
           <text x="${padLeft}" y="18" fill="#697790" font-size="15" font-family="Inter, sans-serif">Force (N)</text>
           <text x="${width / 2 - 55}" y="${height - 12}" fill="#697790" font-size="15" font-family="Inter, sans-serif">Time (s)</text>
           ${legend}
-          <path d="${path}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
-          ${markers}
+          <clipPath id="emForceGraph-clip"><rect x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}"></rect></clipPath>
+          <g clip-path="url(#emForceGraph-clip)">
+            <path d="${path}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            ${markers}
+          </g>
         `;
+        registerZoomGraph("emForceGraph", drawEmForceGraph, { left: padLeft, right: padRight, top: padTop, bottom: padBottom });
       }
 
       function appendEmStatus(message) {
@@ -392,10 +378,7 @@
         }
         stopReconnectWatch();
         await callApi("/api/stop", {});
-        // Restore the graph axis controls to defaults so the next EM window opens normal.
-        resetGraphAxisSettings(
-          { seconds: "emSecondsToDisplay", yMin: "emYAxisMin", yLimit: "emYAxisLimit", showMarkers: "emShowMarkers", cumulative: "emCumulativeTime" },
-          { seconds: 30, yMin: 0, yLimit: 35, showMarkers: true, cumulative: true });
+        resetGraphZoom("emForceGraph");   // clear any scroll-zoom so the next window opens normal
         emTestModal.close();
       }
 

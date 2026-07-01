@@ -66,6 +66,7 @@
           await callApi("/api/stop", {});
         }
         stopReconnectWatch();
+        resetGraphZoom("shearGraph");     // clear any scroll-zoom so the next window opens normal
         // Restore the graph axis controls to defaults so the next shear window opens normal.
         resetGraphAxisSettings(
           { seconds: "secondsToDisplay", yMin: "yAxisMin", yLimit: "yAxisLimit", showMarkers: "showMarkers", cumulative: "cumulativeTime" },
@@ -170,24 +171,27 @@
         const padRight = 24;
         const latest = shearData.length ? shearData[shearData.length - 1].time : 0;
         const startTime = settings.cumulativeTime ? 0 : Math.max(0, latest - settings.seconds);
-        const visible = shearData.filter((point) => point.time >= startTime);
-        const data = visible.length ? visible : [{ time: startTime, force: settings.yMin }];
+        const timeSpan = settings.cumulativeTime ? Math.max(1, latest - startTime, 5) : Math.max(1, settings.seconds);
+        // Default view from the settings controls; scroll the wheel to zoom the data
+        // (graphViewRange returns the zoomed range), with the axis frame staying in place.
+        const view = graphViewRange("shearGraph", { xMin: startTime, xMax: startTime + timeSpan, yMin: settings.yMin, yMax: settings.yLimit });
+        const data = shearData.length ? shearData : [{ time: startTime, force: settings.yMin }];
         const plotWidth = width - padLeft - padRight;
         const plotHeight = height - padTop - padBottom;
-        const timeSpan = settings.cumulativeTime ? Math.max(1, latest - startTime, 5) : Math.max(1, settings.seconds);
-        const ySpan = settings.yLimit - settings.yMin;
-        const toX = (time) => padLeft + ((time - startTime) / timeSpan) * plotWidth;
-        const toY = (force) => height - padBottom - ((force - settings.yMin) / ySpan) * plotHeight;
+        const xSpan = Math.max(1e-6, view.xMax - view.xMin);
+        const ySpan = Math.max(1e-6, view.yMax - view.yMin);
+        const toX = (time) => padLeft + ((time - view.xMin) / xSpan) * plotWidth;
+        const toY = (force) => height - padBottom - ((force - view.yMin) / ySpan) * plotHeight;
         const axisY = height - padBottom;
-        const xTicks = xAxisTicks(startTime, startTime + timeSpan, toX, axisY, "s");
+        const xTicks = xAxisTicks(view.xMin, view.xMax, toX, axisY, "s");
         const yTickCount = 5;
         const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) => {
-          const value = settings.yMin + (ySpan * index) / yTickCount;
+          const value = view.yMin + (ySpan * index) / yTickCount;
           const y = toY(value);
           return `
             <line x1="${padLeft - 5}" y1="${y.toFixed(2)}" x2="${padLeft}" y2="${y.toFixed(2)}" stroke="#c7d1df" stroke-width="1"></line>
             <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${width - padRight}" y2="${y.toFixed(2)}" stroke="#edf2f7" stroke-width="1"></line>
-            <text x="${padLeft - 12}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${value.toFixed(value >= 10 ? 0 : 1)}</text>
+            <text x="${padLeft - 12}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${value.toFixed(Math.abs(value) >= 10 ? 0 : 1)}</text>
           `;
         }).join("");
         const path = data.map((point, index) => {
@@ -211,9 +215,13 @@
           ${xTicks}
           <text x="${padLeft}" y="20" fill="#697790" font-size="15" font-family="Inter, sans-serif">Force (N)</text>
           <text x="${width / 2 - 75}" y="${height - 12}" fill="#697790" font-size="15" font-family="Inter, sans-serif">Time Elapsed (seconds)</text>
-          <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
-          ${markers}
+          <clipPath id="shearGraph-clip"><rect x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}"></rect></clipPath>
+          <g clip-path="url(#shearGraph-clip)">
+            <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            ${markers}
+          </g>
         `;
+        registerZoomGraph("shearGraph", drawShearGraph, { left: padLeft, right: padRight, top: padTop, bottom: padBottom });
       }
 
       async function performShearAnalysis() {

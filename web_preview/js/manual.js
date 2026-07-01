@@ -137,6 +137,7 @@
           await callApi("/api/stop", {});
         }
         stopManualSampling();                  // stop the background force poll on close
+        resetGraphZoom("manualForceTimeGraph");   // clear any scroll-zoom so the next window opens normal
         // Restore the graph axis controls to defaults so the next manual window opens normal.
         resetGraphAxisSettings(
           { seconds: "manualSecondsToDisplay", yMin: "manualYAxisMin", yLimit: "manualYAxisLimit", showMarkers: "manualShowMarkers", cumulative: "manualCumulativeTime" },
@@ -478,6 +479,9 @@
         // Force vs Time is the only live graph - the manual window records load-cell
         // force continuously from the moment it opens. There is no capacitance sensor,
         // so the two capacitance graphs show an explicit empty state, never fake data.
+        // Register it as zoomable BEFORE drawing so drawMiniGraph routes its range through
+        // the scroll-zoom view; scroll the wheel over it to zoom, double-click to reset.
+        registerZoomGraph("manualForceTimeGraph", drawManualGraphs, { left: 58, right: 18, top: 34, bottom: 42 });
         drawMiniGraph("manualForceTimeGraph", visible, "time", "force", "Time (s)", "Force (N)", settings);
         drawManualCapPlaceholder("manualCapForceGraph");
         drawManualCapPlaceholder("manualCapTimeGraph");

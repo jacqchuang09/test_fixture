@@ -787,12 +787,13 @@
           <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>
           <path d="M${padLeft},${padTop} L${padLeft},${height - padBottom} L${width - padRight},${height - padBottom}" fill="none" stroke="#c7d1df" stroke-width="1"></path>
           ${xTicks}
-          <line x1="${padLeft}" y1="${zeroY.toFixed(2)}" x2="${width - padRight}" y2="${zeroY.toFixed(2)}" stroke="#e2e8f0" stroke-width="1"></line>
+          <clipPath id="${svgId}-clip"><rect x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}"></rect></clipPath>
+          <line x1="${padLeft}" y1="${zeroY.toFixed(2)}" x2="${width - padRight}" y2="${zeroY.toFixed(2)}" stroke="#e2e8f0" stroke-width="1" clip-path="url(#${svgId}-clip)"></line>
           <text x="${padLeft}" y="20" fill="#697790" font-size="15" font-family="Inter, sans-serif">${yLabel}</text>
           <text x="${width / 2 - 30}" y="${height - 12}" fill="#697790" font-size="15" font-family="Inter, sans-serif">${xLabel}</text>
           <text x="${padLeft - 12}" y="${height - padBottom + 5}" text-anchor="end" fill="#697790" font-size="13" font-family="Inter, sans-serif">${yMin.toFixed(1)}</text>
           <text x="${padLeft - 12}" y="${padTop + 5}" text-anchor="end" fill="#697790" font-size="13" font-family="Inter, sans-serif">${yMax.toFixed(1)}</text>
-          <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" clip-path="url(#${svgId}-clip)"></path>
         `;
       }
 
@@ -844,9 +845,9 @@
           const pad = Math.max(0.5, (hi - lo) * 0.12);
           return { min: lo - pad, max: hi + pad };
         };
-        const xMin = xKey === "time" ? Math.min(...xValues, 0)
+        let xMin = xKey === "time" ? Math.min(...xValues, 0)
           : (autoScale ? boundsFor(xKey, xValues).min : Math.min(...xValues));
-        const xMax = xKey === "time"
+        let xMax = xKey === "time"
           ? (settings && !settings.cumulativeTime ? xMin + settings.seconds : Math.max(...xValues, xMin + 1))
           : (autoScale ? boundsFor(xKey, xValues).max : Math.max(...xValues, xMin + 1));
         let yMin, yMax;
@@ -859,6 +860,11 @@
           const yPadding = Math.max(0.5, (rawYMax - rawYMin) * 0.12);
           yMin = settings && !settings.autoY && Number.isFinite(settings.yMin) ? settings.yMin : rawYMin - yPadding;
           yMax = settings && !settings.autoY && Number.isFinite(settings.yLimit) ? settings.yLimit : rawYMax + yPadding;
+        }
+        // If this graph opted into scroll-zoom, let the zoomed range override the axes.
+        if (_graphReg[canvasId]) {
+          const view = graphViewRange(canvasId, { xMin, xMax, yMin, yMax });
+          xMin = view.xMin; xMax = view.xMax; yMin = view.yMin; yMax = view.yMax;
         }
         const xSpan = Math.max(1, xMax - xMin);
         const ySpan = Math.max(1, yMax - yMin);
@@ -889,62 +895,110 @@
           <text x="${width / 2 - 24}" y="${height - 10}" fill="#697790" font-size="13" font-family="Inter, sans-serif">${xLabel}</text>
           <text x="${padLeft - 8}" y="${height - padBottom + 4}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${yMin.toFixed(1)}</text>
           <text x="${padLeft - 8}" y="${padTop + 4}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${yMax.toFixed(1)}</text>
-          <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
-          ${markers}
+          <clipPath id="${canvasId}-clip"><rect x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}"></rect></clipPath>
+          <g clip-path="url(#${canvasId}-clip)">
+            <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            ${markers}
+          </g>
         `;
       }
 
-      // ---- live-graph zoom: scroll the wheel over any graph to zoom in/out on the
-      // data, drag to pan, double-click to reset. The zoom is a CSS transform on the
-      // <svg> element, so it survives the live redraws (which only replace innerHTML).
+      // ---- live-graph zoom (range based): scroll the wheel over a live graph to zoom
+      // the DATA in/out around the cursor, drag to pan, double-click to reset. Unlike a
+      // CSS transform, this feeds a zoomed data RANGE back into the graph's own draw
+      // function, so the plot is recomputed: the axis frame and labels stay exactly in
+      // place and their VALUES update to the new range - only the plotted curve rescales.
+      const _graphZoom = {};   // svgId -> {xMin,xMax,yMin,yMax} data range while zoomed/panned
+      const _graphView = {};   // svgId -> the effective range last drawn (for the handlers)
+      const _graphReg = {};    // svgId -> {redraw, insets} for graphs that opted into zoom
+
+      // A drawer passes the DEFAULT range it computed and gets back the range to actually
+      // draw with (the zoomed range if the user has zoomed this graph, else the default).
+      // The result is cached so the wheel/pan handlers can map pixels to data coordinates.
+      function graphViewRange(svgId, def) {
+        const view = _graphZoom[svgId] || def;
+        _graphView[svgId] = view;
+        return view;
+      }
+
+      function resetGraphZoom(svgId) {
+        delete _graphZoom[svgId];
+      }
+
+      // Register a live graph as zoomable. `redraw` is the window's draw function and
+      // `insets` are the plot-area paddings in viewBox units (left/right/top/bottom).
+      function registerZoomGraph(svgId, redraw, insets) {
+        const svg = document.getElementById(svgId);
+        if (!svg) return;
+        _graphReg[svgId] = { redraw, insets };
+        if (!svg.dataset.zoomCursor) { svg.style.cursor = "crosshair"; svg.dataset.zoomCursor = "1"; }
+      }
+
       (function enableGraphZoom() {
-        const graphSvg = (target) => (target && target.closest ? target.closest(".graph-wrap svg") : null);
-        const zoomOf = (svg) => (svg._zoom || (svg._zoom = { scale: 1, tx: 0, ty: 0 }));
-        function apply(svg) {
-          const z = zoomOf(svg);
-          svg.style.transformOrigin = "0 0";
-          svg.style.transform = `translate(${z.tx}px, ${z.ty}px) scale(${z.scale})`;
-          svg.style.cursor = z.scale > 1 ? "grab" : "default";
-        }
+        const regFor = (target) => {
+          const svg = target && target.closest ? target.closest("svg") : null;
+          return svg && svg.id && _graphReg[svg.id] ? { svg, ..._graphReg[svg.id] } : null;
+        };
+        // data coordinate under the cursor, using the plot insets to skip the axis margins.
+        const dataAt = (svg, insets, e) => {
+          const view = _graphView[svg.id];
+          if (!view) return null;
+          const vb = svg.viewBox.baseVal;
+          const r = svg.getBoundingClientRect();
+          const vx = ((e.clientX - r.left) / r.width) * vb.width;
+          const vy = ((e.clientY - r.top) / r.height) * vb.height;
+          const fx = Math.min(1, Math.max(0, (vx - insets.left) / (vb.width - insets.left - insets.right)));
+          const fy = Math.min(1, Math.max(0, (vy - insets.top) / (vb.height - insets.top - insets.bottom)));
+          return { x: view.xMin + fx * (view.xMax - view.xMin), y: view.yMax - fy * (view.yMax - view.yMin) };
+        };
         document.addEventListener("wheel", (e) => {
-          const svg = graphSvg(e.target);
-          if (!svg) return;
+          const reg = regFor(e.target);
+          if (!reg) return;
+          const view = _graphView[reg.svg.id];
+          if (!view) return;
           e.preventDefault();
-          const z = zoomOf(svg);
-          const rect = svg.getBoundingClientRect();
-          const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
-          const next = Math.min(8, Math.max(1, z.scale * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
-          // keep the point under the cursor fixed while zooming
-          z.tx = cx - (cx - z.tx) * (next / z.scale);
-          z.ty = cy - (cy - z.ty) * (next / z.scale);
-          z.scale = next;
-          if (z.scale === 1) { z.tx = 0; z.ty = 0; }
-          apply(svg);
+          const at = dataAt(reg.svg, reg.insets, e);
+          const f = e.deltaY < 0 ? 0.85 : 1 / 0.85;   // wheel up = zoom in
+          _graphZoom[reg.svg.id] = {
+            xMin: at.x - (at.x - view.xMin) * f,
+            xMax: at.x + (view.xMax - at.x) * f,
+            yMin: at.y - (at.y - view.yMin) * f,
+            yMax: at.y + (view.yMax - at.y) * f,
+          };
+          reg.redraw();
         }, { passive: false });
         let pan = null;
         document.addEventListener("mousedown", (e) => {
-          const svg = graphSvg(e.target);
-          if (!svg || zoomOf(svg).scale <= 1) return;
-          const z = zoomOf(svg);
-          pan = { svg, x: e.clientX, y: e.clientY, tx: z.tx, ty: z.ty };
-          svg.style.cursor = "grabbing";
+          const reg = regFor(e.target);
+          if (!reg || !_graphView[reg.svg.id]) return;
+          pan = { id: reg.svg.id, insets: reg.insets, redraw: reg.redraw, x: e.clientX, y: e.clientY,
+                  base: _graphZoom[reg.svg.id] || _graphView[reg.svg.id] };
+          reg.svg.style.cursor = "grabbing";
           e.preventDefault();
         });
         document.addEventListener("mousemove", (e) => {
           if (!pan) return;
-          const z = zoomOf(pan.svg);
-          z.tx = pan.tx + (e.clientX - pan.x);
-          z.ty = pan.ty + (e.clientY - pan.y);
-          apply(pan.svg);
+          const svg = document.getElementById(pan.id);
+          if (!svg) { pan = null; return; }
+          const vb = svg.viewBox.baseVal;
+          const r = svg.getBoundingClientRect();
+          const plotWpx = ((vb.width - pan.insets.left - pan.insets.right) / vb.width) * r.width;
+          const plotHpx = ((vb.height - pan.insets.top - pan.insets.bottom) / vb.height) * r.height;
+          const dx = ((e.clientX - pan.x) / plotWpx) * (pan.base.xMax - pan.base.xMin);
+          const dy = ((e.clientY - pan.y) / plotHpx) * (pan.base.yMax - pan.base.yMin);
+          _graphZoom[pan.id] = {
+            xMin: pan.base.xMin - dx, xMax: pan.base.xMax - dx,
+            yMin: pan.base.yMin + dy, yMax: pan.base.yMax + dy,
+          };
+          pan.redraw();
         });
         document.addEventListener("mouseup", () => {
-          if (pan) { pan.svg.style.cursor = "grab"; pan = null; }
+          if (pan) { const s = document.getElementById(pan.id); if (s) s.style.cursor = "crosshair"; pan = null; }
         });
         document.addEventListener("dblclick", (e) => {
-          const svg = graphSvg(e.target);
-          if (!svg) return;
-          const z = zoomOf(svg);
-          z.scale = 1; z.tx = 0; z.ty = 0;
-          apply(svg);
+          const reg = regFor(e.target);
+          if (!reg) return;
+          resetGraphZoom(reg.svg.id);
+          reg.redraw();
         });
       })();
