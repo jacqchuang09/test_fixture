@@ -161,11 +161,18 @@
       // Start Test gate: require a live Zaber on a real rig; stay soft in simulation
       // (no real load-cell driver) so dev/demo runs still work. Returns true if the
       // run may proceed, false if it was hard-blocked.
-      async function zaberStartGateOk() {
+      // bannerId (optional): the open test window's persistent disconnect banner. A
+      // confirmed live connection clears it (this Start IS the reconnect checkpoint);
+      // a lost connection shows the stationary dialog and raises the banner.
+      async function zaberStartGateOk(bannerId) {
         const status = await callApi("/api/connection-check", {});
         if (!status) return true;                  // backend hiccup - don't hard-block
-        if (status.connected === true) return true;
+        if (status.connected === true) {
+          if (bannerId) hideDisconnectBanner(bannerId);
+          return true;
+        }
         if (status.connection_lost === true) {     // real rig lost its actuator: hard block
+          if (bannerId) showDisconnectBanner(bannerId, "actuator");
           showErrorDialog(
             "The actuator connection was lost. Reconnect the Zaber (re-select the COM port) " +
             "and wait for it to confirm before starting the test.",
@@ -173,6 +180,7 @@
           return false;
         }
         if (status.simulation === true) {          // simulation machine: soft
+          if (bannerId) hideDisconnectBanner(bannerId);
           setMainMessage("No Zaber connected - running in simulation mode.", "");
           return true;
         }
@@ -823,6 +831,7 @@
 
       function openEmTest() {
         emTestModal.showModal();
+        hideDisconnectBanner("emDisconnectBanner");
         resetEmSimulation();
         setEmState("IDLE", "em testing window opened.");
         setEmState("READY", "click start to begin run 1.");
@@ -832,17 +841,20 @@
 
       function openShearTest() {
         shearTestModal.showModal();
+        hideDisconnectBanner("shearDisconnectBanner");
         resetShearGraph();
         drawShearGraph();
       }
 
       function openManualTest() {
         manualTestModal.showModal();
+        hideDisconnectBanner("manualDisconnectBanner");
         resetManualTest();
       }
 
       function openCyclicalTest() {
         cyclicalTestModal.showModal();
+        hideDisconnectBanner("cyclicalDisconnectBanner");
         resetCyclicalTest();
         drawCyclicalPreview();
       }
@@ -862,6 +874,7 @@
         initializeCalibrationSettings();
         setPositionReadout(17);
         calibrationModal.showModal();
+        hideDisconnectBanner("calibrationDisconnectBanner");
         // window-specific notice belongs in the calibration window itself.
         if (status && status.simulation === true && status.connected !== true) {
           addCalibrationUpdate("No Zaber connected - calibration running in simulation mode.");

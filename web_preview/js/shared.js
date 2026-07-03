@@ -531,6 +531,44 @@
             "Open the Zaber Launcher and move the actuator back to its home position, then reconnect the Zaber and start the test again.",
           "Zaber disconnected");
       }
+      // The load cell (FUTEK) dropped mid-recording. Unlike a Zaber loss there is no
+      // actuator to re-home, so the guidance is different: reconnect the load cell and
+      // press Start to redo the run (the backend already invalidated the partial data).
+      function showLoadCellDisconnectDialog(message) {
+        showErrorDialog(
+          (message ? String(message).trim() + " " : "") +
+            "Reconnect the load cell (check its cable), then press Start to redo this run.",
+          "Load cell disconnected");
+      }
+
+      // Persistent per-window disconnect banner. Reflects state only - there is NO
+      // background reconnect poll (that would keep reopening the COM port and fight the
+      // Zaber Launcher while the operator re-homes). It is shown when a disconnect is
+      // detected and cleared at the next successful Start (see zaberStartGateOk) or on
+      // window open. `sensor` is "loadcell" or "actuator".
+      function showDisconnectBanner(bannerId, sensor) {
+        const el = document.getElementById(bannerId);
+        if (!el) return;
+        el.textContent = sensor === "loadcell"
+          ? "Load cell disconnected - reconnect it and press Start to redo this run."
+          : "Zaber disconnected - reconnect it and press Start to continue.";
+        el.classList.remove("hidden");
+      }
+      function hideDisconnectBanner(bannerId) {
+        const el = document.getElementById(bannerId);
+        if (el) el.classList.add("hidden");
+      }
+
+      // Route a backend disconnect (status.disconnect === true) to the correct dialog
+      // and banner. sensor === "loadcell" means the FUTEK dropped; anything else is the
+      // actuator. bannerId is the open window's persistent banner (optional).
+      function handleDisconnect(status, bannerId) {
+        const sensor = status && status.sensor === "loadcell" ? "loadcell" : "actuator";
+        if (bannerId) showDisconnectBanner(bannerId, sensor);
+        if (sensor === "loadcell") showLoadCellDisconnectDialog(status && status.message);
+        else showDisconnectDialog(status && status.message);
+      }
+
       // kept as a harmless no-op: the modal close buttons still call it, but there is no
       // reconnect watcher to stop anymore.
       function stopReconnectWatch() {}

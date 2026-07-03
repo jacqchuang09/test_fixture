@@ -170,8 +170,9 @@
         }
         refreshExtrusionPlaceholder();
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
-        // live Zaber on a real rig (soft in simulation).
-        if (!(await zaberStartGateOk())) return;
+        // live Zaber on a real rig (soft in simulation). A confirmed connection
+        // here clears the disconnect banner.
+        if (!(await zaberStartGateOk("calibrationDisconnectBanner"))) return;
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press
@@ -218,11 +219,16 @@
           } else if (status.status === "error" || status.status === "stopped") {
             finish(status.message || "Fuji Film Test stopped.");
             if (status.disconnect) {
-              // no auto-reconnect: fix it with the Zaber Launcher (move back to home),
-              // reconnect, then start again. finish() already unlocked the controls.
-              setStatePill("calibrationState", "DISCONNECTED", "actuator disconnected - use the Zaber Launcher.", "discarded");
-              addCalibrationUpdate("Actuator connection lost during the Fuji Film test.");
-              showDisconnectDialog(status.message);
+              // no auto-reconnect: reconnect (re-home via the Zaber Launcher for an
+              // actuator drop), then start again. finish() already unlocked the
+              // controls. handleDisconnect picks the right dialog + raises the banner.
+              const loadCell = status.sensor === "loadcell";
+              setStatePill("calibrationState", "DISCONNECTED",
+                loadCell ? "load cell disconnected - reconnect it." : "actuator disconnected - use the Zaber Launcher.",
+                "discarded");
+              addCalibrationUpdate(status.message ||
+                (loadCell ? "Load cell disconnected during the Fuji Film test." : "Actuator connection lost during the Fuji Film test."));
+              handleDisconnect(status, "calibrationDisconnectBanner");
             } else if (status.safety_stop) {
               // safety trip: the engine already stopped and homed. Dialog, then
               // restart the Fuji Film test on Continue.

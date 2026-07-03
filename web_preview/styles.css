@@ -46,6 +46,35 @@
         margin: 0 auto 20px;
       }
 
+      /* persistent disconnected banner, shown at the top of a test window while the
+         Zaber or load cell is dropped. It reflects state only - there is deliberately
+         no background reconnect poll (see showDisconnectDialog in shared.js): a poll
+         would keep reopening the COM port and fight the Zaber Launcher while the
+         operator re-homes. The banner clears at the next successful Start. Red so a
+         dismissed dialog can never hide the condition. */
+      .disconnect-banner {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        margin-bottom: 12px;
+        padding: 11px 14px;
+        border: 1px solid var(--red);
+        border-left: 4px solid var(--red);
+        border-radius: 8px;
+        background: #fdeceb;
+        color: var(--red-dark);
+        font-weight: 600;
+        font-size: 14px;
+      }
+      .disconnect-banner::before {
+        content: "\26A0";   /* warning triangle */
+        font-size: 16px;
+        line-height: 1;
+      }
+      /* override the shared .hidden (display:none) with higher specificity so the
+         banner collapses when hidden even though it defaults to display:flex. */
+      .disconnect-banner.hidden { display: none; }
+
       .error-dialog {
         border: none;
         border-radius: 12px;
@@ -634,25 +663,30 @@
         margin-top: 12px;
       }
 
-      /* status pills are used at the top of testing windows for ready/running/stopped messages. */
+      /* Status messages at the top of testing windows (ready/running/stopped, etc.).
+         Same flat, full-width block as .disconnect-banner - a left-aligned rectangle
+         with a colored left accent stripe - so it wraps cleanly on two lines instead
+         of ballooning into a rounded pill. Only the color changes with state. */
       .state-pill {
         display: flex;
-        width: fit-content;
-        align-items: center;
-        gap: 4px;
-        min-height: 34px;
-        margin: 0 auto 12px;
-        border-radius: 999px;
+        align-items: baseline;
+        gap: 8px;
+        margin: 0 0 12px;
+        padding: 11px 14px;
+        border: 1px solid #b9d0ff;
+        border-left: 4px solid var(--blue);
+        border-radius: 8px;
         background: #eaf1ff;
         color: var(--blue-dark);
-        padding: 0 14px;
-        font-size: 15px;
-        font-weight: 900;
-        letter-spacing: 0.03em;
+        text-align: left;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.35;
       }
 
       .state-pill .state-tag {
-        font-weight: 900;
+        flex: none;
+        font-weight: 800;
         letter-spacing: 0.03em;
       }
 
@@ -666,10 +700,14 @@
       .state-pill.state-kept {
         background: #e7f6ec;
         color: #1c7a3d;
+        border-color: #aee0bf;
+        border-left-color: var(--green);
       }
       .state-pill.state-discarded {
         background: #fdeede;
         color: #9a5b00;
+        border-color: #f2d3a8;
+        border-left-color: #c07f00;
       }
 
       .analysis-page {
@@ -1260,11 +1298,11 @@
       }
 
       .cyclical-state-row {
-        text-align: center;
+        text-align: left;
       }
 
       .cyclical-state-row .state-pill {
-        justify-content: center;
+        justify-content: flex-start;
       }
 
       .cyclical-controls input,

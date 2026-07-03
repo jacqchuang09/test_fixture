@@ -166,8 +166,9 @@
           return;
         }
         // Fatigue drives the real actuator - require a live Zaber on a real rig
-        // (stays soft in simulation so dev/demo runs still work).
-        if (!(await zaberStartGateOk())) return;
+        // (stays soft in simulation so dev/demo runs still work). A confirmed
+        // connection here clears the disconnect banner.
+        if (!(await zaberStartGateOk("cyclicalDisconnectBanner"))) return;
         cyclicalData = [];
         cyclicalStartedAt = performance.now();
         setCyclicalControlsLocked(true);
@@ -220,11 +221,12 @@
         setCyclicalControlsLocked(false);
         document.getElementById("cyclicalPauseButton").disabled = true;
         if (status.disconnect) {
-          // no auto-reconnect: the operator fixes it with the Zaber Launcher (move back
-          // to home), reconnects, then restarts. Leave Start enabled for that.
+          // no auto-reconnect: the operator reconnects (re-home via the Zaber Launcher
+          // for an actuator drop), then presses Start to redo the test. handleDisconnect
+          // picks the actuator vs load-cell dialog and raises the persistent banner.
           document.getElementById("cyclicalStartButton").disabled = false;
-          setStatePill("cyclicalState", "DISCONNECTED", status.message || "Actuator connection lost.", "discarded");
-          showDisconnectDialog(status.message);
+          setStatePill("cyclicalState", "DISCONNECTED", status.message || "Connection lost.", "discarded");
+          handleDisconnect(status, "cyclicalDisconnectBanner");
           return;
         }
         if (status.safety_stop) {

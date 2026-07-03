@@ -167,8 +167,9 @@
         if (emRunTimer || emReturnHomeTimer) return;
 
         // Start Test hard gate: on a real rig, require a live Zaber connection
-        // before any motion. Stays soft in simulation (no real load cell).
-        if (!(await zaberStartGateOk())) return;
+        // before any motion. Stays soft in simulation (no real load cell). A
+        // confirmed connection here clears the disconnect banner.
+        if (!(await zaberStartGateOk("emDisconnectBanner"))) return;
 
         // Redo mode: data is never overwritten - this creates a NEW run that
         // supersedes the chosen one. A reason is required (recorded in the report).
@@ -259,11 +260,13 @@
           document.getElementById("emPauseButton").disabled = true;
           document.getElementById("emTestCloseButton").disabled = false;
           if (status.disconnect) {
-            // no auto-reconnect: the operator moves the actuator back to home with the
-            // Zaber Launcher, reconnects, then restarts. Leave Start enabled for that.
+            // no auto-reconnect: the operator reconnects (re-home via the Zaber
+            // Launcher for an actuator drop), then presses Start to redo the run.
+            // handleDisconnect picks the actuator vs load-cell dialog + raises the
+            // persistent banner so a dismissed dialog can't hide the state.
             document.getElementById("emStartButton").disabled = false;
-            setEmState("DISCONNECTED", status.message || "Actuator connection lost.", "discarded");
-            showDisconnectDialog(status.message);
+            setEmState("DISCONNECTED", status.message || "Connection lost.", "discarded");
+            handleDisconnect(status, "emDisconnectBanner");
           } else if (status.safety_stop) {
             // safety trip (force spike / ceiling / travel limit): the engine already
             // stopped and returned home. Pop a dialog; on Continue, restart THIS run
@@ -286,7 +289,7 @@
       // no redo/supersession. The engine has already homed; this re-approaches.
       async function restartCurrentEmRun() {
         if (emRunTimer || emReturnHomeTimer) return;
-        if (!(await zaberStartGateOk())) { document.getElementById("emStartButton").disabled = false; return; }
+        if (!(await zaberStartGateOk("emDisconnectBanner"))) { document.getElementById("emStartButton").disabled = false; return; }
         document.getElementById("emStartButton").disabled = true;
         document.getElementById("emPauseButton").disabled = false;
         document.getElementById("emAnalysisButton").disabled = true;

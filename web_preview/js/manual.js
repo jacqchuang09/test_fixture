@@ -74,7 +74,9 @@
       // from t=0, starts sampling/plotting force, and unlocks the manual controls.
       async function startManualTest() {
         if (manualStarted) return;
-        if (!(await zaberStartGateOk())) return;
+        // Start is the connection checkpoint: a confirmed link clears the banner and
+        // begins sampling; a lost link blocks and raises the banner.
+        if (!(await zaberStartGateOk("manualDisconnectBanner"))) return;
         manualData = [];
         manualClockStart = performance.now();
         manualLiveForce = 0;
@@ -241,8 +243,8 @@
         if (isManualMoving()) return;
         // Per-press connection checkpoint: re-confirm the live Zaber before every
         // manual move, the same gate Begin Test and each EM run use. On a real rig a
-        // dropped connection blocks the move with the reconnect message.
-        if (!(await zaberStartGateOk())) return;
+        // dropped connection blocks the move with the reconnect message + banner.
+        if (!(await zaberStartGateOk("manualDisconnectBanner"))) return;
         // Lock all controls for the whole move and poll the backend for live
         // force/position - it streams real readings into the run status as it steps
         // the actuator, so the graphs update live (no faked values, no fixed timer).
@@ -296,6 +298,7 @@
           return;
         }
         if (!result || result.ok === false || result.disconnect) {
+          if (result && result.disconnect) handleDisconnect(result, "manualDisconnectBanner");
           setManualState("ERROR", (result && result.message) || "Manual move failed.");
           return;
         }
@@ -310,7 +313,7 @@
       async function recordManualForceMove(targetForce, direction, description) {
         if (isManualMoving()) return;
         // Per-press connection checkpoint, same as the distance move above.
-        if (!(await zaberStartGateOk())) return;
+        if (!(await zaberStartGateOk("manualDisconnectBanner"))) return;
         setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
         setManualState("WAITING TO START", "initializing load cell - please wait…");
@@ -363,7 +366,7 @@
           return;
         }
         if (!result || result.ok === false || result.disconnect) {
-          if (result && result.disconnect) showDisconnectDialog(result.message);
+          if (result && result.disconnect) handleDisconnect(result, "manualDisconnectBanner");
           setManualState("ERROR", (result && result.message) || "Manual force move failed.");
           return;
         }
@@ -620,7 +623,7 @@
           } else if (result && result.disconnect) {
             disconnected = true;
             addCalibrationUpdate(result.message || "Actuator connection lost. Check the cable before continuing.");
-            showDisconnectDialog(result.message);
+            handleDisconnect(result, "calibrationDisconnectBanner");
           } else if (result && result.stopped_for_safety) {
             if (typeof result.position === "number") setPositionReadout(result.position);
             addCalibrationUpdate(result.message || "Force limit reached. Move stopped for safety.");

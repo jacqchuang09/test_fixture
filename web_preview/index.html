@@ -258,6 +258,7 @@
       </div>
       <div class="modal-body">
         <div class="mini-panel em-panel">
+          <div id="emDisconnectBanner" class="disconnect-banner hidden"></div>
           <div id="emState" class="state-pill"><span class="state-tag">IDLE</span></div>
           <div class="em-live-grid">
             <div class="em-live-panel">
@@ -314,6 +315,7 @@
         <button id="manualTestCloseButton" class="close" onclick="closeManualTestWindow()">x</button>
       </div>
       <div class="modal-body graph-shell">
+        <div id="manualDisconnectBanner" class="disconnect-banner hidden"></div>
         <div>
           <div id="manualState" class="state-pill"><span class="state-tag">READY:</span><span class="state-message">manual testing window opened.</span></div>
         </div>
@@ -495,6 +497,7 @@
         <button id="cyclicalTestCloseButton" class="close" onclick="closeCyclicalTestWindow()">x</button>
       </div>
       <div class="modal-body graph-shell">
+        <div id="cyclicalDisconnectBanner" class="disconnect-banner hidden"></div>
         <div class="cyclical-state-row">
           <div id="cyclicalState" class="state-pill"><span class="state-tag">READY:</span><span class="state-message">cyclical fatigue test ready.</span></div>
         </div>
@@ -575,6 +578,7 @@
         <button id="shearTestCloseButton" class="close" onclick="closeShearTestWindow()">x</button>
       </div>
       <div class="modal-body graph-shell">
+        <div id="shearDisconnectBanner" class="disconnect-banner hidden"></div>
         <div>
           <div id="shearState" class="state-pill"><span class="state-tag">READY:</span><span class="state-message">click Start to begin live shear graph.</span></div>
           <div id="shearMessage" class="main-message ok"></div>
@@ -689,6 +693,7 @@
         <button id="calibrationCloseButton" class="close" onclick="stopReconnectWatch(); calibrationModal.close()">x</button>
       </div>
       <div class="modal-body">
+        <div id="calibrationDisconnectBanner" class="disconnect-banner hidden"></div>
         <div id="calibrationState" class="state-pill" style="margin-bottom: 12px;"><span class="state-tag">READY:</span><span class="state-message">calibration window ready.</span></div>
         <div class="calibration-columns">
           <div class="calibration-card">

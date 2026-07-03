@@ -121,6 +121,7 @@ class _FutekReader:
         self._stop = False
         self._read_fail = 0        # consecutive bad reads on an open device (3 = lost mid-run)
         self._lost = False         # set True after a real device stops responding mid-recording
+        self._thread_obj = None    # the owner thread, so a teardown can join it cleanly
 
     def ensure_started(self):
         # Open the device and start the owner thread on first force need. Non-blocking:
@@ -134,7 +135,9 @@ class _FutekReader:
                 self._failed = True
                 return
             self._started = True
-        threading.Thread(target=self._run, name="futek-reader", daemon=True).start()
+            t = threading.Thread(target=self._run, name="futek-reader", daemon=True)
+            self._thread_obj = t
+        t.start()
 
     def _run(self):
         # Owns the device for its whole life: opens it on THIS thread, then reads it
@@ -212,11 +215,17 @@ class _FutekReader:
             return self._kind
 
     def stop(self):
-        # Shut the reader down (app exit / explicit reconnect) and clear the failure
-        # latch so a later ensure_started() re-attempts the open.
+        # Shut the reader down (app exit / explicit reconnect / recovery after a loss)
+        # and clear every latch so a later ensure_started() re-opens the device fresh.
         with self._lock:
             self._stop = True
             dev = self._device
+            t = self._thread_obj
+        # Let the owner thread notice _stop and leave its read loop BEFORE closing the
+        # device it holds - closing a device mid-read can crash the .NET driver. join has
+        # a timeout so a wedged thread can never hang the app.
+        if t is not None and t.is_alive() and t is not threading.current_thread():
+            t.join(timeout=2.0)
         if dev is not None:
             try:
                 dev.stop(); dev.exit()
@@ -230,6 +239,21 @@ class _FutekReader:
             self._stop = False
             self._read_fail = 0
             self._lost = False
+            self._thread_obj = None
+
+    def reconnect_if_lost(self):
+        # Recovery after a mid-recording disconnect. When the load cell is unplugged the
+        # owner thread is left spinning on a dead device handle and _lost stays latched
+        # forever (a good read clears _read_fail but never _lost). Reopening the physical
+        # device needs a brand-new driver object, so tear the dead reader fully down here;
+        # the next ensure_started() then opens a live one. This is what lets a reconnected
+        # load cell come back without restarting the app. Only acts when actually lost, so
+        # a normal run never pays the multi-second reopen.
+        with self._lock:
+            lost = self._lost
+        if lost:
+            print("[futek] load cell was lost - tearing the dead reader down to reopen it")
+            self.stop()
 
 
 READER = _FutekReader()
@@ -250,6 +274,10 @@ def _open_futek():
     # Ensure the single owner reader is running, then BLOCK until it has a reading (or
     # the open failed). Returns the reader when a device is in use, or None for
     # simulated force. Callers keep using `simulated = (axis is None) or (futek is None)`.
+    # reconnect_if_lost() first rebuilds a reader that a prior disconnect left dead, so
+    # every test start (this is the one path they all open through) recovers the load
+    # cell instead of inheriting the stuck, non-reading reader.
+    READER.reconnect_if_lost()
     READER.ensure_started()
     READER.wait_ready()
     return READER if READER.real_in_use() else None
@@ -588,6 +616,13 @@ class RunEngine:
                   elapsed=0.0, samples=0, trace=[], disconnect=False, safety_stop=False,
                   message="initializing load cell - please wait")
         futek = _open_futek()
+        # a force-target jog with no real load cell on a real rig must block, not simulate
+        # (it would drive the actuator toward a fabricated force). Return the load-cell
+        # disconnect payload the manual window routes to the dialog + banner + redo.
+        if _futek_init_failed(futek):
+            self._set(status="error", disconnect=True, sensor="loadcell", message=FUTEK_INIT_FAIL_MSG)
+            STATE._move_loop_active = False
+            return {"ok": False, "disconnect": True, "sensor": "loadcell", "message": FUTEK_INIT_FAIL_MSG}
         simulated = (axis is None) or (futek is None)
         jog_speed = max(0.01, min(abs(float(speed)) if speed else 2.0, 25.0))
         # capture the resting (uncompressed) baseline when at home; otherwise reuse the
@@ -745,6 +780,14 @@ class RunEngine:
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
         futek = _open_futek()             # None when the FUTEK is simulated
+        # On a real rig a load cell that will not open (unplugged / dropped and not
+        # reconnected) must NOT silently fall back to simulated force - that records a
+        # fabricated run while the operator thinks it is real. Block it like shear/fatigue
+        # do, and route it through the load-cell disconnect UI (dialog + banner + redo).
+        if _futek_init_failed(futek):
+            self._set(status="error", disconnect=True, sensor="loadcell",
+                      message=FUTEK_INIT_FAIL_MSG)
+            return
         simulated = (axis is None) or (futek is None)
         descend = SIM_DESCEND_MM_S if simulated else REAL_DESCEND_MM_S
         ascend = SIM_ASCEND_MM_S if simulated else REAL_ASCEND_MM_S
@@ -762,6 +805,10 @@ class RunEngine:
             nonlocal idx, prev_force
             if STATE.comms_lost:
                 raise ZaberDisconnect()
+            # a real load cell that drops out mid-press invalidates the run just like a
+            # comms loss (same 3-strike latch used by the fatigue/shear loops).
+            if futek is not None and futek.lost():
+                raise FutekDisconnect()
             # Callers pass the tared change (force - start-of-press baseline). Take
             # the magnitude so a load cell of either polarity reads positive during
             # compression - this is the single place the live/recorded force is made
@@ -889,6 +936,14 @@ class RunEngine:
                       message="Force spike detected. Motion stopped for safety.")
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
+        except FutekDisconnect:
+            # the load cell dropped mid-press: the actuator link is still good, so home
+            # it (safe) and invalidate this run. sensor="loadcell" picks the load-cell
+            # dialog, not the Zaber re-home one.
+            self._stop_axis(axis)
+            self._home(axis)
+            self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
+                      message="Load cell disconnected during the run. Run invalidated.")
         except Exception as exc:
             # any unexpected failure: stop and home the actuator so it is never
             # left moving or in an unknown state when the UI re-enables Start,
@@ -932,6 +987,12 @@ class RunEngine:
         # safe. No data is saved - this is a calibration press.
         axis = STATE.axis
         futek = _open_futek()
+        # calibration presses to a force target - a missing real load cell must block,
+        # not silently simulate the 20 N target (see the EM note above).
+        if _futek_init_failed(futek):
+            self._set(status="error", disconnect=True, sensor="loadcell",
+                      message=FUTEK_INIT_FAIL_MSG)
+            return
         simulated = (axis is None) or (futek is None)
         descend = SIM_DESCEND_MM_S if simulated else REAL_DESCEND_MM_S
         self._set(status="running", run=0, force=0.0, samples=0, message="",
@@ -1005,8 +1066,8 @@ class RunEngine:
             self._zaber_disconnect_safe_state()
         except FutekDisconnect:
             self._stop_axis(axis); self._home(axis)
-            self._set(status="error", position=HOME_MM,
-                      message="Load cell disconnected during calibration.")
+            self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
+                      message="Load cell disconnected during calibration. Run invalidated.")
         except Exception as exc:
             self._set(status="error", message=f"Fuji Film Test failed: {exc}")
         finally:
@@ -1055,8 +1116,8 @@ class RunEngine:
                 # comms_lost mid-run detection in the fatigue/EM loops).
                 if futek is not None and futek.lost():
                     print("[shear] load cell disconnected during recording - invalidating capture")
-                    self._set(status="error", disconnect=True,
-                              message="Load cell disconnected during recording. Capture invalidated")
+                    self._set(status="error", disconnect=True, sensor="loadcell",
+                              message="Load cell disconnected during recording. Capture invalidated.")
                     return
                 f = self._read_force(futek, 0.0)
                 if init_force is None:
@@ -1343,8 +1404,8 @@ class RunEngine:
             # the load cell dropped out mid-run: stop the actuator, invalidate the run.
             self._stop_axis(axis)
             self._home(axis)
-            self._set(status="error", disconnect=True, position=HOME_MM,
-                      message="Load cell disconnected during the fatigue test. Run invalidated")
+            self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
+                      message="Load cell disconnected during the fatigue test. Run invalidated.")
         except Exception as exc:
             self._set(status="error", message=f"Fatigue test failed: {exc}")
         finally:
@@ -1458,8 +1519,9 @@ class RunEngine:
         STATE.simulated = True
         STATE.connection_lost = True
         # disconnect=True lets the UI tell this apart from a force-spike stop: it
-        # hard-blocks Start and starts the live reconnect watcher.
-        self._set(status="error", disconnect=True,
+        # hard-blocks Start and shows the disconnected banner. sensor="actuator" picks
+        # the Zaber dialog (re-home via the Launcher), not the load-cell one.
+        self._set(status="error", disconnect=True, sensor="actuator",
                   message="Actuator connection lost. Check the cable before continuing.")
 
     def _write_cap(self, test_folder, run_number, readings, surface_area_mm2):
