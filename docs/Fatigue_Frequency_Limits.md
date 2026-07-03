@@ -1,7 +1,9 @@
 # Fatigue Frequency Limits — why and how much
 
-**Recommended field limits:** Frequency = **1 Hz (min) to 2 Hz (max)**, whole numbers.
-*(Today the field allows 1–5 Hz. The 5 Hz ceiling is optimistic — see below.)*
+**Field limits:** Frequency = **0.1 Hz to 1 Hz** (decimals allowed). For a faithful **square**
+wave keep it **at or below ~0.25 Hz** (measured on the rig — see the empirical section below);
+above that it rounds into a triangle, and above ~0.5 Hz it no longer reaches its bounds. Other
+waveforms (sine/triangle) track better and can use the full range.
 
 ---
 
@@ -102,8 +104,10 @@ The run **already measures the travel live** during calibration (`got_shallow` �
 travel at the start of each run and **warn or clamp** if the chosen frequency is too high for that
 specific sample. That makes the limit exact per sample instead of a conservative guess.
 
-## What changes if we adopt 1–2 Hz
+## What changed (field set to 0.1–1 Hz)
 
-- `web_preview/js/fatigue.js` — Frequency field min/max + the snap message ("Frequency must be a
-  whole number between 1 and 2 Hz").
-- Feature 1.11.5 #1 spec (test-plan doc + user-stories doc) — "1 to 5 Hz" → "1 to 2 Hz".
+- `web_preview/index.html` — the Frequency input is now `min="0.1" max="1" step="0.05"`
+  (default 0.25), replacing the old `min=1 max=5 step=1`.
+- `web_preview/js/main.js` — the snap message is now "Frequency must be between 0.1 and 1 Hz."
+- Still open: Feature 1.11.5 #1 spec (test-plan doc + user-stories doc) says "1 to 5 Hz" — update
+  it to "0.1 to 1 Hz" to match the field.

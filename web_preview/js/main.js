@@ -1032,7 +1032,7 @@
         manualTargetForce:   ["manual", "Target Force can be up to 32 N."],
         cyclicalLowerForce:  ["fatigue", "Lower Force Bound must be a whole number of at least 1 N."],
         cyclicalUpperForce:  ["fatigue", "Upper Force Bound cannot exceed 32 N."],
-        waveformFrequency:   ["fatigue", "Frequency must be a whole number of at least 1 Hz."],
+        waveformFrequency:   ["fatigue", "Frequency must be between 0.1 and 1 Hz."],
         cyclicalCycleCount:  ["fatigue", "Number of Cycles must be a whole number of at least 1."],
       };
       function showSnapLimitMessage(id) {
