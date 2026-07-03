@@ -268,6 +268,11 @@ def main():
               "the sensor it presses with whatever force that depth produces - start small and watch the force.")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    # start clean: a re-run with a different frequency list must not leave orphan data
+    # files behind (they would look like part of the current sweep).
+    for old in OUT_DIR.glob("*"):
+        if old.suffix in (".csv", ".svg"):
+            old.unlink()
     axis = units = None
     if not args.sim:
         if not args.port:
