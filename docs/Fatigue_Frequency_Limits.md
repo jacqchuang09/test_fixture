@@ -1,9 +1,9 @@
 # Fatigue Frequency Limits — why and how much
 
-**Field limits:** Frequency = **0.1 Hz to 1 Hz** (decimals allowed). For a faithful **square**
-wave keep it **at or below ~0.25 Hz** (measured on the rig — see the empirical section below);
-above that it rounds into a triangle, and above ~0.5 Hz it no longer reaches its bounds. Other
-waveforms (sine/triangle) track better and can use the full range.
+**Field limits:** Frequency = **0.1 to 5 Hz** for sine and the other waveforms; a **square**
+wave is capped at **0.1 to 1 Hz** (decimals allowed). For a faithful square, keep it **at or
+below ~0.25 Hz** (measured on the rig — see the empirical section below); above that it rounds
+into a triangle, and above ~0.5 Hz it no longer reaches its bounds.
 
 ---
 
@@ -104,10 +104,12 @@ The run **already measures the travel live** during calibration (`got_shallow` �
 travel at the start of each run and **warn or clamp** if the chosen frequency is too high for that
 specific sample. That makes the limit exact per sample instead of a conservative guess.
 
-## What changed (field set to 0.1–1 Hz)
+## What changed (waveform-dependent frequency limits)
 
-- `web_preview/index.html` — the Frequency input is now `min="0.1" max="1" step="0.05"`
-  (default 0.25), replacing the old `min=1 max=5 step=1`.
-- `web_preview/js/main.js` — the snap message is now "Frequency must be between 0.1 and 1 Hz."
+- `web_preview/index.html` — the Frequency input is `min="0.1" step="0.05"`, `max="5"` for sine
+  (default 1); the field starts on the default Sine waveform.
+- `web_preview/js/main.js` — selecting a waveform sets the max and default: **square** → max
+  1 Hz, default 0.25; **sine / triangle / sawtooth / blood pressure** → max 5 Hz, default 1. The
+  snap message reflects the current max ("Frequency must be between 0.1 and {max} Hz").
 - Still open: Feature 1.11.5 #1 spec (test-plan doc + user-stories doc) says "1 to 5 Hz" — update
-  it to "0.1 to 1 Hz" to match the field.
+  it to note the square-wave 0.1–1 Hz cap.

@@ -1038,7 +1038,11 @@
       function showSnapLimitMessage(id) {
         const entry = SNAP_LIMIT_MSG[id];
         if (!entry) return;
-        const [where, msg] = entry;
+        let [where, msg] = entry;
+        if (id === "waveformFrequency") {   // the max is waveform-dependent (1 Hz square, 5 Hz else)
+          const mx = document.getElementById("waveformFrequency").getAttribute("max") || "5";
+          msg = `Frequency must be between 0.1 and ${mx} Hz.`;
+        }
         if (where === "main") setMainMessage(msg, "error");
         else if (where === "calibration") addCalibrationUpdate(msg);
         else if (where === "manual") setManualState("READY", msg);
@@ -1059,6 +1063,17 @@
           updateTestConfigState();
           if (cyclicalTestModal.open) drawCyclicalPreview();
         });
+      });
+      // Frequency limits are waveform-dependent: a square wave only holds its flats up to
+      // ~0.25 Hz so it is capped at 1 Hz (default 0.25); sine and the others track fine and
+      // keep the full 0.1 to 5 Hz range (default 1). Picking a waveform sets both the max and
+      // a sensible default; the operator can still change the value afterward.
+      document.getElementById("waveformType").addEventListener("change", () => {
+        const isSquare = document.getElementById("waveformType").value.toLowerCase().startsWith("square");
+        const freq = document.getElementById("waveformFrequency");
+        freq.max = isSquare ? "1" : "5";
+        freq.value = isSquare ? "0.25" : "1";
+        if (cyclicalTestModal.open) drawCyclicalPreview();
       });
       ["sensorType"].forEach((id) => {
         document.getElementById(id).addEventListener("input", invalidateBasicSettings);
