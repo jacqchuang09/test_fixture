@@ -8,8 +8,16 @@ build, how fast the Zaber can actually move and how badly a square wave rounds
 off (and how far the extrusion distance falls short) as the frequency rises -
 i.e. the real curve behind the fatigue "too fast to track" warning.
 
-Run on the rig (do it in free travel, with nothing in the actuator's way):
-    python3 tools/zaber_square_wave_characterization.py --port COM3
+Run on the rig, oscillating at the sensor operating point. The fatigue test reaches the
+sensor at ~28 mm (HOME 17 + GAP 10.95); set --center to the press depth you read from a
+fatigue calibration run for your sensor:
+    python3 tools/zaber_square_wave_characterization.py --port COM3 --center 28 --amplitude 1
+
+WARNING: this drives a POSITION square wave with NO force limit. If --center is set into the
+sensor, the actuator presses with whatever force that depth produces - the real fatigue run
+is force-limited, this tool is not. Start with a small --amplitude and a --center near
+contact, and watch the force. Use a lower --center (free travel, nothing in the way) if you
+only want to characterize tracking without load.
 
 Preview the output shape with no hardware (a slew-rate model, not a measurement):
     python3 tools/zaber_square_wave_characterization.py --sim
@@ -38,9 +46,16 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ---- parameters (edit for your setup) -------------------------------------
-CENTER_MM = 25.0           # midpoint of the oscillation (inside 17-50.8 mm travel)
-AMPLITUDE_MM = 1.0         # commanded half-swing of the square wave (mm)
+# ---- parameters (edit for your setup, or override with --center / --amplitude) ----
+# Oscillate at the sensor operating point, not in free air. The fatigue test reaches the
+# sensor at HOME (17) + GAP (10.95) = ~28 mm and then presses a small, force-limited depth
+# beyond it, so that is where the square wave should be characterized. Read the actual press
+# depth from a fatigue calibration run for your sensor and pass it with --center; the default
+# is the nominal sensor-contact depth from the fatigue geometry so the tester at least reaches
+# the sensor instead of stopping short in mid-travel.
+FATIGUE_CONTACT_MM = 17.0 + 10.95   # HOME_MM + GAP_MM in run_engine.py (where the sensor is met)
+CENTER_MM = 28.0           # midpoint of the oscillation (~sensor contact); override with --center
+AMPLITUDE_MM = 1.0         # commanded half-swing of the square wave (mm); override with --amplitude
 # Dense coverage from ~0 to 0.5 Hz - that is where the real actuator's usable square wave
 # lives. Jacqueline's sweep put the usable limit near ~0.25 Hz, with the wave already
 # deviating clearly by 0.5 Hz and losing the square shape entirely by 1 Hz, so this is the
@@ -232,10 +247,25 @@ def plot_curve(summary, usable_limit):
 
 # ---- main ------------------------------------------------------------------
 def main():
+    global CENTER_MM, AMPLITUDE_MM
     ap = argparse.ArgumentParser(description="Zaber square-wave characterization sweep.")
     ap.add_argument("--port", help="serial port of the Zaber (e.g. COM3, /dev/tty.usbserial-XXX)")
     ap.add_argument("--sim", action="store_true", help="no hardware: use a slew-rate model to preview the output")
+    ap.add_argument("--center", type=float, default=CENTER_MM,
+                    help=f"oscillation midpoint in mm (default {CENTER_MM:g}, ~sensor contact); "
+                         "set to the press depth from a fatigue calibration run for your sensor")
+    ap.add_argument("--amplitude", type=float, default=AMPLITUDE_MM,
+                    help=f"commanded half-swing in mm (default {AMPLITUDE_MM:g})")
     args = ap.parse_args()
+
+    CENTER_MM = args.center
+    AMPLITUDE_MM = args.amplitude
+    hi = _clamp(CENTER_MM + AMPLITUDE_MM, TRAVEL_MIN_MM + MARGIN_MM, TRAVEL_MAX_MM - MARGIN_MM)
+    lo = _clamp(CENTER_MM - AMPLITUDE_MM, TRAVEL_MIN_MM + MARGIN_MM, TRAVEL_MAX_MM - MARGIN_MM)
+    print(f"[characterize] oscillating {lo:.2f} <-> {hi:.2f} mm  (center {CENTER_MM:g}, +/-{AMPLITUDE_MM:g} mm)")
+    if not args.sim:
+        print("[characterize] WARNING: position square wave, NO force limit. If the center is set into "
+              "the sensor it presses with whatever force that depth produces - start small and watch the force.")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     axis = units = None
