@@ -17,6 +17,38 @@ If the operator asks for more cycles per second than the rod can physically trav
 in time, the press never reaches the bounds or never holds flat — it rounds into a triangle and
 then shrinks in amplitude. So **frequency must be bounded by what the speed allows.**
 
+## Empirical square-wave characterization (measured sweep) — for the sensor team
+
+The theory further down estimates the square-wave ceiling from speed alone. A measured
+frequency sweep on the rig (`tools/zaber_square_wave_characterization.py`) tells the real
+story, and it is **much lower**: the actuator only reproduces a faithful square wave up to
+**~0.25 Hz** (Jacqueline's sweep).
+
+- **~0.25 Hz** — usable square-wave limit: the wave still reaches its bounds and holds roughly flat.
+- **0.5 Hz** — the waveform already deviates significantly (edges round off, the flats shrink).
+- **1 Hz** — clearly not a square any more.
+
+**Deviation metric.** For each swept frequency the tool drives the commanded square wave and
+logs the achieved position, then reports the **RMS error between achieved and commanded
+position, as a percent of the commanded amplitude** (0% = a perfect square; higher = more
+rounded / more lag). The "usable limit" is the fastest frequency whose deviation stays within
+the limit *and* still reaches its bounds. The sweep is dense below 0.5 Hz (0.1, 0.15, 0.2,
+0.25 … 0.5 Hz) so the knee near 0.25 Hz is well resolved. Output graph:
+`zaber_characterization/characterization_curve.svg` (deviation + amplitude fidelity + tracking
+lag vs frequency, with the usable limit marked).
+
+**Why it's lower than the speed-only math below.** The `V/(4·D)` estimate assumes the rod
+reaches full speed instantly. In reality the edges are limited by acceleration, command/serial
+latency, and settling, which dominate the short travels of a square wave — so the measured
+square-wave limit lands far below the naive speed ceiling.
+
+**What this means for the sensor team.** A fatigue test can still *cycle* the sample above
+0.25 Hz, but the shape becomes a rounded / triangular wave, not a square. If a true square is
+required, keep the frequency at or below ~0.25 Hz. If a rounded cycle is acceptable, the
+higher fatigue field limits below still apply. Next step: rerun the sweep on the rig for more
+points between 0 and 0.5 Hz, save the graph, and send it with this deviation definition to the
+sensor team.
+
 ## The speed that actually matters
 
 The fatigue loop uses **two different speeds**, which is easy to confuse:
