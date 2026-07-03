@@ -22,19 +22,21 @@ only want to characterize tracking without load.
 Preview the output shape with no hardware (a slew-rate model, not a measurement):
     python3 tools/zaber_square_wave_characterization.py --sim
 
-The headline number is the DEVIATION METRIC: the RMS error between the achieved and the
-commanded (ideal square) position, as a percent of the commanded amplitude. The "usable
-square-wave limit" is the fastest frequency whose deviation stays within DEVIATION_LIMIT_PCT
-and that still reaches its bounds. On this build the real actuator's limit lands near
-~0.25 Hz (deviation is already significant by 0.5 Hz and the wave is clearly not square by
-1 Hz), which is why the sweep is dense below 0.5 Hz.
+What decides "is it a square" is the FLAT-HOLD: the fraction of each half-cycle the achieved
+position actually sits at the commanded level (a true square holds most of it; a triangle
+holds almost none). A frequency is usable while flat-hold >= FLAT_HOLD_MIN_PCT AND the wave
+still reaches its bounds (amplitude fidelity). The RMS deviation is reported for context only
+- it rides high at every frequency because a square always has an unavoidable slew edge, so
+it can not pick the limit. On this build the usable limit lands near ~0.25 Hz (a ~1 s slew
+leaves no flat by 0.5 Hz, and the wave can not even reach amplitude by 1 Hz), which is why
+the sweep is dense below 0.5 Hz.
 
 Outputs land in ./zaber_characterization/ :
     data_<freq>Hz.csv            commanded vs achieved position per frequency
-    summary.csv                  per frequency: deviation (RMS %), amplitude fidelity,
-                                 tracking lag, and whether it is within the limit
+    summary.csv                  per frequency: flat-hold %, amplitude fidelity, deviation
+                                 (RMS %), tracking lag, and whether it is a real square
     overlay.svg                  commanded vs achieved, small multiples per frequency
-    characterization_curve.svg   deviation + fidelity + lag vs frequency, usable limit marked
+    characterization_curve.svg   flat-hold + fidelity + deviation + lag vs frequency, limit marked
 """
 import argparse
 import csv
@@ -61,10 +63,19 @@ AMPLITUDE_MM = 1.0         # commanded half-swing of the square wave (mm); overr
 # deviating clearly by 0.5 Hz and losing the square shape entirely by 1 Hz, so this is the
 # band that needs resolution. A few higher points show the roll-off for context.
 FREQUENCIES_HZ = [0.1, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.75, 1.0]
-# The square-wave "deviation metric": RMS error between the achieved and the commanded
-# (ideal square) position, as a percent of the commanded amplitude. A frequency is called
-# usable while this stays at or below the limit AND the wave still reaches its bounds.
+# Deviation metric (informational): RMS error between the achieved and the commanded (ideal
+# square) position, as a percent of the commanded amplitude. NOTE: this stays high at every
+# frequency because a square always has an unavoidable slew edge, so it is NOT the pass/fail.
 DEVIATION_LIMIT_PCT = 15.0
+# What actually decides "usable square": the wave must reach its bounds (amplitude fidelity)
+# AND still hold a flat between edges (flat-hold). Flat-hold = fraction of the steady window
+# the achieved sits within FLAT_TOL_FRAC of amplitude of the commanded level. A frequency is
+# usable while fidelity >= FIDELITY_MIN and flat-hold >= FLAT_HOLD_MIN_PCT.
+# FLAT_HOLD_MIN_PCT = 50 means the wave must hold a flat for at least half of each half-cycle
+# to count as square. On the measured rig data this lands the usable limit at ~0.25 Hz.
+FLAT_TOL_FRAC = 0.15
+FLAT_HOLD_MIN_PCT = 50.0
+FIDELITY_MIN = 0.9
 CYCLES = 6                 # cycles to run at each frequency
 MAX_RUN_S = 30.0           # cap per-frequency run time so the low frequencies do not run forever
 SAMPLE_HZ = 200            # position-logging rate
@@ -139,29 +150,28 @@ def metrics(records, freq):
     # use the second half (steady state) and skip the leading transient.
     steady = records[len(records) // 2:]
     if not steady:
-        return {"freq": freq, "fidelity": 0.0, "lag_ms": float("nan"), "rms_pct": float("nan")}
+        return {"freq": freq, "fidelity": 0.0, "lag_ms": float("nan"), "rms_pct": float("nan"), "flat_hold_pct": 0.0}
     cmd = [r[1] for r in steady]
     act = [r[2] for r in steady if not math.isnan(r[2])]
     if not act:
-        return {"freq": freq, "fidelity": 0.0, "lag_ms": float("nan"), "rms_pct": float("nan")}
+        return {"freq": freq, "fidelity": 0.0, "lag_ms": float("nan"), "rms_pct": float("nan"), "flat_hold_pct": 0.0}
     achieved_amp = (max(act) - min(act)) / 2.0
     fidelity = _clamp(achieved_amp / AMPLITUDE_MM, 0.0, 1.0)
     rms = math.sqrt(sum((c - a) ** 2 for c, a in zip(cmd, act)) / len(act))
     rms_pct = 100.0 * rms / AMPLITUDE_MM
-    # edge lag: average time for the achieved trace to cross the midpoint after a
-    # commanded edge, over the steady window.
-    mid = CENTER_MM
-    lags, last_edge_t, last_cmd = [], None, cmd[0]
-    t0 = steady[0][0]
-    for (t, c, a) in steady:
-        if c != last_cmd:
-            last_edge_t, last_cmd = t, c
-        if last_edge_t is not None and not math.isnan(a):
-            # first crossing of the midpoint toward the new command after an edge
-            pass
-    # simpler, robust lag: cross-correlate commanded vs achieved.
+    # flat-hold: fraction of the steady window the achieved position actually sits AT the
+    # commanded level (within tolerance) - i.e. how much flat the square holds between edges.
+    # A true square holds most of each half-cycle; a triangle holds almost none. This, with
+    # amplitude fidelity, is what really says "is it square": the RMS deviation stays high at
+    # every frequency because a square always has an unavoidable slew edge, so RMS alone can
+    # not pick the limit.
+    tol = FLAT_TOL_FRAC * AMPLITUDE_MM
+    held = sum(1 for c, a in zip(cmd, act) if abs(c - a) <= tol)
+    flat_hold_pct = 100.0 * held / len(act)
+    # tracking lag: cross-correlate commanded vs achieved (best shift = the lag).
     lag_ms = _xcorr_lag_ms(cmd, act, 1.0 / SAMPLE_HZ)
-    return {"freq": freq, "fidelity": fidelity, "lag_ms": lag_ms, "rms_pct": rms_pct}
+    return {"freq": freq, "fidelity": fidelity, "lag_ms": lag_ms, "rms_pct": rms_pct,
+            "flat_hold_pct": flat_hold_pct}
 
 
 def _xcorr_lag_ms(cmd, act, dt):
@@ -206,26 +216,31 @@ def plot_overlay(all_data):
     plt.close(fig)
 
 
+def is_usable(s):
+    """A frequency yields a real square only if it reaches its bounds AND holds a flat."""
+    return s["fidelity"] >= FIDELITY_MIN and s["flat_hold_pct"] >= FLAT_HOLD_MIN_PCT
+
+
 def usable_square_limit(summary):
-    """Highest swept frequency whose square-wave deviation is within the limit AND still
-    reaches its bounds. This is the number to report: the fastest square wave the actuator
-    faithfully reproduces on this build."""
-    ok = [s["freq"] for s in summary
-          if s["rms_pct"] <= DEVIATION_LIMIT_PCT and s["fidelity"] >= 0.9]
+    """Highest swept frequency that still holds a flat and reaches its bounds - the fastest
+    frequency at which the actuator produces a real square on this build."""
+    ok = [s["freq"] for s in summary if is_usable(s)]
     return max(ok) if ok else None
 
 
 def plot_curve(summary, usable_limit):
     freqs = [s["freq"] for s in summary]
     fig, ax1 = plt.subplots(figsize=(9.5, 5.5))
-    # The deviation metric is the headline: RMS error from the ideal square, % of amplitude.
-    ax1.plot(freqs, [s["rms_pct"] for s in summary], "-o", color="#c5423c", label="square-wave deviation (RMS)")
+    # Flat-hold + amplitude fidelity decide squareness; deviation is shown for context (it
+    # rides high at every frequency because the slew edge is unavoidable).
+    ax1.plot(freqs, [s["flat_hold_pct"] for s in summary], "-o", color="#3f8b42", label="flat-hold (squareness)")
     ax1.plot(freqs, [100 * s["fidelity"] for s in summary], "-^", color="#2f6fe0", label="amplitude fidelity")
-    ax1.axhline(DEVIATION_LIMIT_PCT, color="#c5423c", ls=":", lw=1, alpha=0.7)
-    ax1.text(freqs[0], DEVIATION_LIMIT_PCT + 1.5, f"{DEVIATION_LIMIT_PCT:g}% deviation limit",
-             color="#c5423c", fontsize=8, va="bottom")
+    ax1.plot(freqs, [s["rms_pct"] for s in summary], "-x", color="#c5423c", alpha=0.6, label="deviation (RMS, context)")
+    ax1.axhline(FLAT_HOLD_MIN_PCT, color="#3f8b42", ls=":", lw=1, alpha=0.7)
+    ax1.text(freqs[0], FLAT_HOLD_MIN_PCT + 1.5, f"{FLAT_HOLD_MIN_PCT:g}% flat-hold limit",
+             color="#3f8b42", fontsize=8, va="bottom")
     ax1.set_xlabel("Square-wave frequency (Hz)")
-    ax1.set_ylabel("Deviation / fidelity (% of amplitude)")
+    ax1.set_ylabel("Flat-hold / fidelity / deviation (% )")
     ax1.grid(True, alpha=0.3)
     ax2 = ax1.twinx()
     ax2.plot(freqs, [s["lag_ms"] for s in summary], "-s", color="#ed6c02", label="tracking lag")
@@ -233,7 +248,7 @@ def plot_curve(summary, usable_limit):
     ax2.tick_params(axis="y", labelcolor="#ed6c02")
     if usable_limit is not None:
         ax1.axvline(usable_limit, color="#3f8b42", ls="--", lw=1.6)
-        ax1.text(usable_limit, 4, f" usable square-wave\n limit ~ {usable_limit:g} Hz",
+        ax1.text(usable_limit, 50, f" usable square-wave\n limit ~ {usable_limit:g} Hz",
                  color="#3f8b42", fontsize=9, fontweight="bold", va="bottom", ha="left")
     lines1, labels1 = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
@@ -245,12 +260,29 @@ def plot_curve(summary, usable_limit):
     plt.close(fig)
 
 
+def load_existing(src):
+    """Load a previous run's data_<freq>Hz.csv files so the summary and plots can be
+    recomputed with the current metric, without touching the rig."""
+    import re
+    all_data = {}
+    for fp in sorted(src.glob("data_*Hz.csv"),
+                     key=lambda p: float(re.search(r"([0-9.]+)Hz", p.name).group(1))):
+        freq = float(re.search(r"([0-9.]+)Hz", fp.name).group(1))
+        rows = list(csv.reader(open(fp)))[1:]
+        all_data[freq] = [(float(r[0]), float(r[1]), float(r[2]))
+                          for r in rows if len(r) >= 3 and r[2] != ""]
+    return all_data
+
+
 # ---- main ------------------------------------------------------------------
 def main():
-    global CENTER_MM, AMPLITUDE_MM
+    global CENTER_MM, AMPLITUDE_MM, OUT_DIR
     ap = argparse.ArgumentParser(description="Zaber square-wave characterization sweep.")
     ap.add_argument("--port", help="serial port of the Zaber (e.g. COM3, /dev/tty.usbserial-XXX)")
     ap.add_argument("--sim", action="store_true", help="no hardware: use a slew-rate model to preview the output")
+    ap.add_argument("--reanalyze", metavar="DIR",
+                    help="skip the rig: recompute the summary and plots from existing "
+                         "data_<freq>Hz.csv files in DIR (use after changing the metric)")
     ap.add_argument("--center", type=float, default=CENTER_MM,
                     help=f"oscillation midpoint in mm (default {CENTER_MM:g}, ~sensor contact); "
                          "set to the press depth from a fatigue calibration run for your sensor")
@@ -260,75 +292,87 @@ def main():
 
     CENTER_MM = args.center
     AMPLITUDE_MM = args.amplitude
-    hi = _clamp(CENTER_MM + AMPLITUDE_MM, TRAVEL_MIN_MM + MARGIN_MM, TRAVEL_MAX_MM - MARGIN_MM)
-    lo = _clamp(CENTER_MM - AMPLITUDE_MM, TRAVEL_MIN_MM + MARGIN_MM, TRAVEL_MAX_MM - MARGIN_MM)
-    print(f"[characterize] oscillating {lo:.2f} <-> {hi:.2f} mm  (center {CENTER_MM:g}, +/-{AMPLITUDE_MM:g} mm)")
-    if not args.sim:
-        print("[characterize] WARNING: position square wave, NO force limit. If the center is set into "
-              "the sensor it presses with whatever force that depth produces - start small and watch the force.")
+    if not args.reanalyze:
+        hi = _clamp(CENTER_MM + AMPLITUDE_MM, TRAVEL_MIN_MM + MARGIN_MM, TRAVEL_MAX_MM - MARGIN_MM)
+        lo = _clamp(CENTER_MM - AMPLITUDE_MM, TRAVEL_MIN_MM + MARGIN_MM, TRAVEL_MAX_MM - MARGIN_MM)
+        print(f"[characterize] oscillating {lo:.2f} <-> {hi:.2f} mm  (center {CENTER_MM:g}, +/-{AMPLITUDE_MM:g} mm)")
+        if not args.sim:
+            print("[characterize] WARNING: position square wave, NO force limit. If the center is set into "
+                  "the sensor it presses with whatever force that depth produces - start small and watch the force.")
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    # start clean: a re-run with a different frequency list must not leave orphan data
-    # files behind (they would look like part of the current sweep).
-    for old in OUT_DIR.glob("*"):
-        if old.suffix in (".csv", ".svg"):
-            old.unlink()
-    axis = units = None
-    if not args.sim:
-        if not args.port:
-            ap.error("give --port for a hardware run, or --sim to preview without hardware")
-        from zaber_motion import Units
-        from zaber_motion.ascii import Connection
-        units = Units.LENGTH_MILLIMETRES
-        conn = Connection.open_serial_port(args.port)
-        device = conn.detect_devices()[0]
-        axis = device.get_axis(1)
-        if axis.is_parked():
-            axis.unpark()
+    if args.reanalyze:
+        # No rig: recompute the summary and plots from the CSVs already in DIR.
+        OUT_DIR = Path(args.reanalyze)
+        if not OUT_DIR.is_dir():
+            ap.error(f"--reanalyze: {OUT_DIR} is not a directory")
+        all_data = load_existing(OUT_DIR)
+        if not all_data:
+            ap.error(f"--reanalyze: no data_<freq>Hz.csv files found in {OUT_DIR}")
+        summary = [metrics(all_data[f], f) for f in sorted(all_data)]
+        print(f"[characterize] reanalyzing {len(all_data)} frequencies from {OUT_DIR}")
+    else:
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        # start clean: a re-run with a different frequency list must not leave orphan data
+        # files behind (they would look like part of the current sweep).
+        for old in OUT_DIR.glob("*"):
+            if old.suffix in (".csv", ".svg"):
+                old.unlink()
+        axis = units = None
+        if not args.sim:
+            if not args.port:
+                ap.error("give --port for a hardware run, --sim to preview, or --reanalyze DIR")
+            from zaber_motion import Units
+            from zaber_motion.ascii import Connection
+            units = Units.LENGTH_MILLIMETRES
+            conn = Connection.open_serial_port(args.port)
+            device = conn.detect_devices()[0]
+            axis = device.get_axis(1)
+            if axis.is_parked():
+                axis.unpark()
 
-    all_data, summary = {}, []
-    try:
-        for freq in FREQUENCIES_HZ:
-            print(f"[characterize] {freq:g} Hz ...")
-            recs = run_frequency_sim(freq) if args.sim else run_frequency_hw(axis, units, freq)
-            all_data[freq] = recs
-            with open(OUT_DIR / f"data_{freq:g}Hz.csv", "w", newline="") as f:
-                w = csv.writer(f)
-                w.writerow(["time_s", "commanded_mm", "achieved_mm"])
-                w.writerows(recs)
-            summary.append(metrics(recs, freq))
-            if not args.sim:
-                time.sleep(SETTLE_S)
-    finally:
-        if axis is not None:
-            try:
-                axis.move_absolute(CENTER_MM, units, wait_until_idle=True)
-                axis.park()
-            except Exception:
-                pass
+        all_data, summary = {}, []
+        try:
+            for freq in FREQUENCIES_HZ:
+                print(f"[characterize] {freq:g} Hz ...")
+                recs = run_frequency_sim(freq) if args.sim else run_frequency_hw(axis, units, freq)
+                all_data[freq] = recs
+                with open(OUT_DIR / f"data_{freq:g}Hz.csv", "w", newline="") as f:
+                    w = csv.writer(f)
+                    w.writerow(["time_s", "commanded_mm", "achieved_mm"])
+                    w.writerows(recs)
+                summary.append(metrics(recs, freq))
+                if not args.sim:
+                    time.sleep(SETTLE_S)
+        finally:
+            if axis is not None:
+                try:
+                    axis.move_absolute(CENTER_MM, units, wait_until_idle=True)
+                    axis.park()
+                except Exception:
+                    pass
 
     limit = usable_square_limit(summary)
 
     with open(OUT_DIR / "summary.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["frequency_hz", "deviation_rms_pct", "amplitude_fidelity_pct",
-                    "tracking_lag_ms", "within_limit"])
+        w.writerow(["frequency_hz", "flat_hold_pct", "amplitude_fidelity_pct",
+                    "deviation_rms_pct", "tracking_lag_ms", "is_square"])
         for s in summary:
-            within = "yes" if (s["rms_pct"] <= DEVIATION_LIMIT_PCT and s["fidelity"] >= 0.9) else "no"
-            w.writerow([s["freq"], round(s["rms_pct"], 1), round(100 * s["fidelity"], 1),
-                        round(s["lag_ms"], 1), within])
+            w.writerow([s["freq"], round(s["flat_hold_pct"], 1), round(100 * s["fidelity"], 1),
+                        round(s["rms_pct"], 1), round(s["lag_ms"], 1),
+                        "yes" if is_usable(s) else "no"])
 
     plot_overlay(all_data)
     plot_curve(summary, limit)
-    print("\nSummary (frequency -> deviation, fidelity, lag):")
+    print("\nSummary (frequency -> flat-hold, fidelity, deviation, lag):")
     for s in summary:
-        flag = "" if (s["rms_pct"] <= DEVIATION_LIMIT_PCT and s["fidelity"] >= 0.9) else "  << over limit"
-        print(f"  {s['freq']:>4g} Hz   deviation {s['rms_pct']:5.1f}%   fidelity {100*s['fidelity']:5.1f}%"
-              f"   lag {s['lag_ms']:5.1f} ms{flag}")
+        flag = "" if is_usable(s) else "  << not square"
+        print(f"  {s['freq']:>4g} Hz   flat-hold {s['flat_hold_pct']:5.1f}%   fidelity {100*s['fidelity']:5.1f}%"
+              f"   deviation {s['rms_pct']:5.1f}%   lag {s['lag_ms']:5.1f} ms{flag}")
     if limit is not None:
-        print(f"\nUsable square-wave limit (deviation <= {DEVIATION_LIMIT_PCT:g}% and reaches bounds): {limit:g} Hz")
+        print(f"\nUsable square-wave limit (flat-hold >= {FLAT_HOLD_MIN_PCT:g}% and reaches bounds): {limit:g} Hz")
     else:
-        print(f"\nNo swept frequency stayed within the {DEVIATION_LIMIT_PCT:g}% deviation limit.")
+        print(f"\nNo swept frequency held a flat (>= {FLAT_HOLD_MIN_PCT:g}%) - none produced a real square.")
     print(f"\nWrote results and plots to {OUT_DIR.resolve()}")
 
 
