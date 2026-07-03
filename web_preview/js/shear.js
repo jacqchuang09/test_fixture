@@ -113,7 +113,15 @@
             return;
           }
           if (Array.isArray(status.trace) && status.trace.length) {
-            shearData = status.trace.map((point) => ({ time: point[0], force: point[1] }));
+            // The backend streams only a rolling window (to keep the live payload small),
+            // so ACCUMULATE the new samples into the full series instead of replacing it -
+            // otherwise older data scrolls out of the window and is lost from both the graph
+            // and the analysis. Samples are time-ordered, so append anything newer than the
+            // last one we already have.
+            const lastT = shearData.length ? shearData[shearData.length - 1].time : -Infinity;
+            for (const point of status.trace) {
+              if (point[0] > lastT) shearData.push({ time: point[0], force: point[1] });
+            }
             latestShearAnalysisData = shearData.slice();
             drawShearGraph();
           }
