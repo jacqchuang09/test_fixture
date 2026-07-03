@@ -122,6 +122,7 @@ class _FutekReader:
         self._read_fail = 0        # consecutive bad reads on an open device (3 = lost mid-run)
         self._lost = False         # set True after a real device stops responding mid-recording
         self._thread_obj = None    # the owner thread, so a teardown can join it cleanly
+        self._last_ok = 0.0        # monotonic time of the last good read (staleness watchdog)
 
     def ensure_started(self):
         # Open the device and start the owner thread on first force need. Non-blocking:
@@ -165,13 +166,19 @@ class _FutekReader:
             self._device = device
             self._kind = kind
         print(f"[futek] >>> load cell open: {kind}. One owner thread now reads it ~100 Hz.")
-        # The ONLY place the device is ever read:
+        # The ONLY place the device is ever read - and, on a REAL rig, the only place it is
+        # re-opened. Both must stay on this one owner thread (the whole point of the single
+        # owner: no cross-thread driver access), so recovery from a mid-run unplug happens
+        # right here rather than by rebuilding the thread from outside.
+        last_reopen = 0.0
         while not self._stop:
             try:
                 raw = device.getNormalData()
                 with self._lock:
                     self._latest_raw = raw
                     self._read_fail = 0
+                    self._last_ok = time.monotonic()
+                    self._lost = False        # a good read heals a prior loss (device is back)
             except Exception:
                 # a single bad read is transient: keep the last value and keep going. But
                 # a REAL load cell that stops responding for several reads in a row has
@@ -182,6 +189,27 @@ class _FutekReader:
                         self._read_fail += 1
                         if self._read_fail >= 3:
                             self._lost = True
+                # Re-initialize a dropped REAL load cell IN PLACE (this owner thread is the
+                # only one allowed to touch the driver). Without this the thread would spin
+                # on the dead handle forever and the cell never read again until an app
+                # restart. Retry about once a second so a reconnected cell comes back on its
+                # own; the run that was in progress still aborts, but the NEXT test finds a
+                # live cell. A stale reading is held until a reopen sticks.
+                now = time.monotonic()
+                if kind == "REAL" and now - last_reopen > 1.0:
+                    last_reopen = now
+                    try:
+                        device.stop(); device.exit()
+                    except Exception:
+                        pass
+                    try:
+                        device = futek_cli.FUTEKDeviceCLI()
+                        with self._lock:
+                            self._device = device
+                            self._read_fail = 0
+                        print("[futek] load cell dropped - re-initialized the device (reopened)")
+                    except Exception as exc:
+                        print(f"[futek] reopen attempt failed, will retry: {type(exc).__name__}: {exc}")
             time.sleep(SAMPLE_DT)
 
     def wait_ready(self, timeout=15.0):
@@ -206,9 +234,18 @@ class _FutekReader:
 
     def lost(self):
         # True once a REAL device that was open has stopped responding (unplugged
-        # mid-recording). Mirrors STATE.comms_lost for the actuator.
+        # mid-recording). Mirrors STATE.comms_lost for the actuator. Also True when the
+        # owner thread has gone quiet: if a read hangs (a dead USB handle can block instead
+        # of raising), _last_ok stops advancing, so a >0.4 s silence counts as lost. That
+        # makes a run abort - and the actuator stop - promptly, instead of finishing its
+        # move while reads quietly go stale. Healthy reads run ~100 Hz, so this never
+        # false-trips in normal use.
         with self._lock:
-            return self._lost
+            if self._lost:
+                return True
+            if self._kind == "REAL" and self._last_ok and (time.monotonic() - self._last_ok) > 0.4:
+                return True
+            return False
 
     def kind(self):
         with self._lock:
@@ -242,17 +279,17 @@ class _FutekReader:
             self._thread_obj = None
 
     def reconnect_if_lost(self):
-        # Recovery after a mid-recording disconnect. When the load cell is unplugged the
-        # owner thread is left spinning on a dead device handle and _lost stays latched
-        # forever (a good read clears _read_fail but never _lost). Reopening the physical
-        # device needs a brand-new driver object, so tear the dead reader fully down here;
-        # the next ensure_started() then opens a live one. This is what lets a reconnected
-        # load cell come back without restarting the app. Only acts when actually lost, so
-        # a normal run never pays the multi-second reopen.
+        # Fallback recovery run from _open_futek at each test start. The owner thread now
+        # re-initializes a dropped REAL cell in place (see _run), so by the time the
+        # operator reconnects and presses Start the reader is usually already live and this
+        # is a no-op. It still covers the cases the thread cannot fix itself: the open
+        # FAILED so no thread is running (_failed), or the cell is still latched lost at
+        # Start - tear the reader fully down so ensure_started() opens a brand-new one.
+        # Only acts when down, so a healthy run never pays the multi-second reopen.
         with self._lock:
-            lost = self._lost
-        if lost:
-            print("[futek] load cell was lost - tearing the dead reader down to reopen it")
+            down = self._lost or self._failed
+        if down:
+            print("[futek] reader still down at start - tearing it down for a fresh open")
             self.stop()
 
 
@@ -496,6 +533,14 @@ class RunEngine:
             # read force, stream it, enforce ceiling/spike. Returns a stop result dict
             # if it tripped, else None.
             nonlocal force, prev_force
+            # a dropped load cell makes the force ceiling below meaningless (it would read a
+            # stale value), so halt the actuator the moment the cell is lost - do not keep
+            # driving toward the sensor without a live over-force guard.
+            if futek is not None and futek.lost():
+                self._stop_axis(axis)
+                msg = "Load cell disconnected during the move. Actuator stopped."
+                self._set(status="error", disconnect=True, sensor="loadcell", position=STATE.position_mm, message=msg)
+                return {"ok": False, "position": STATE.position_mm, "disconnect": True, "sensor": "loadcell", "message": msg}
             force = abs(self._read_force(futek, max(0.0, STATE.position_mm - HOME_MM)))
             t = time.time() - t0
             trace.append([round(t, 4), round(force, 4)])
@@ -690,6 +735,17 @@ class RunEngine:
                               message="Actuator connection lost. Check the cable before continuing.")
                     return {"ok": False, "position": STATE.position_mm, "disconnect": True,
                             "message": "Actuator connection lost. Check the cable before continuing."}
+                # A force-feedback jog must HALT THE ACTUATOR the instant the load cell
+                # drops - it is driving toward a force it can no longer read, so it would
+                # otherwise keep compressing on a dead/stale reading. lost() flips within
+                # ~0.4 s (3 bad reads or the staleness watchdog), so this stops the move
+                # promptly, not after it finishes.
+                if futek is not None and futek.lost():
+                    self._stop_axis(axis)
+                    self._set(status="error", disconnect=True, sensor="loadcell", position=STATE.position_mm,
+                              message="Load cell disconnected during the move. Actuator stopped.")
+                    return {"ok": False, "position": STATE.position_mm, "disconnect": True, "sensor": "loadcell",
+                            "message": "Load cell disconnected during the move. Actuator stopped."}
                 depth = max(0.0, STATE.position_mm - HOME_MM)
                 f = self._read_force(futek, depth)
                 # ABSOLUTE force vs the resting baseline (positive for either polarity),

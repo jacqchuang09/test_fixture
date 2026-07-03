@@ -168,7 +168,7 @@
         // Fatigue drives the real actuator - require a live Zaber on a real rig
         // (stays soft in simulation so dev/demo runs still work). A confirmed
         // connection here clears the disconnect banner.
-        if (!(await zaberStartGateOk("cyclicalDisconnectBanner"))) return;
+        if (!(await zaberStartGateOk())) return;
         cyclicalData = [];
         cyclicalStartedAt = performance.now();
         setCyclicalControlsLocked(true);
@@ -226,7 +226,7 @@
           // picks the actuator vs load-cell dialog and raises the persistent banner.
           document.getElementById("cyclicalStartButton").disabled = false;
           setStatePill("cyclicalState", "DISCONNECTED", status.message || "Connection lost.", "discarded");
-          handleDisconnect(status, "cyclicalDisconnectBanner");
+          handleDisconnect(status);
           return;
         }
         if (status.safety_stop) {

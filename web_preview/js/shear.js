@@ -89,9 +89,6 @@
         document.getElementById("shearAnalysisButton").disabled = true;
         document.getElementById("shearTestCloseButton").disabled = true;
         setShearState("WAITING TO START", "initializing load cell - please wait…");
-        // pressing Start is the operator's "I reconnected the load cell" - clear the
-        // disconnect banner; a still-dropped cell re-raises it on the next poll.
-        hideDisconnectBanner("shearDisconnectBanner");
         drawShearGraph();
         console.log("[shear] START - requesting live load-cell read from backend");
         const result = await callApi("/api/shear-start", {});
@@ -166,7 +163,7 @@
           setShearState("ERROR", status.message || "shear test error.");
           // a shear-test disconnect is always the load cell (the shear test does not
           // drive the actuator): show the load-cell dialog + banner.
-          if (status.disconnect) handleDisconnect(status, "shearDisconnectBanner");
+          if (status.disconnect) handleDisconnect(status);
         } else {
           setShearState("STOPPED", `shear test stopped. ${latestShearAnalysisData.length} samples captured. click Start to begin again.`);
         }

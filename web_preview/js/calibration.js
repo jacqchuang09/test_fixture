@@ -172,7 +172,7 @@
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
         // live Zaber on a real rig (soft in simulation). A confirmed connection
         // here clears the disconnect banner.
-        if (!(await zaberStartGateOk("calibrationDisconnectBanner"))) return;
+        if (!(await zaberStartGateOk())) return;
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press
@@ -228,7 +228,7 @@
                 "discarded");
               addCalibrationUpdate(status.message ||
                 (loadCell ? "Load cell disconnected during the Fuji Film test." : "Actuator connection lost during the Fuji Film test."));
-              handleDisconnect(status, "calibrationDisconnectBanner");
+              handleDisconnect(status);
             } else if (status.safety_stop) {
               // safety trip: the engine already stopped and homed. Dialog, then
               // restart the Fuji Film test on Continue.

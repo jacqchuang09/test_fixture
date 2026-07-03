@@ -541,30 +541,12 @@
           "Load cell disconnected");
       }
 
-      // Persistent per-window disconnect banner. Reflects state only - there is NO
-      // background reconnect poll (that would keep reopening the COM port and fight the
-      // Zaber Launcher while the operator re-homes). It is shown when a disconnect is
-      // detected and cleared at the next successful Start (see zaberStartGateOk) or on
-      // window open. `sensor` is "loadcell" or "actuator".
-      function showDisconnectBanner(bannerId, sensor) {
-        const el = document.getElementById(bannerId);
-        if (!el) return;
-        el.textContent = sensor === "loadcell"
-          ? "Load cell disconnected - reconnect it and press Start to redo this run."
-          : "Zaber disconnected - reconnect it and press Start to continue.";
-        el.classList.remove("hidden");
-      }
-      function hideDisconnectBanner(bannerId) {
-        const el = document.getElementById(bannerId);
-        if (el) el.classList.add("hidden");
-      }
-
-      // Route a backend disconnect (status.disconnect === true) to the correct dialog
-      // and banner. sensor === "loadcell" means the FUTEK dropped; anything else is the
-      // actuator. bannerId is the open window's persistent banner (optional).
-      function handleDisconnect(status, bannerId) {
+      // Route a backend disconnect (status.disconnect === true) to the correct dialog.
+      // sensor === "loadcell" means the FUTEK dropped; anything else is the actuator.
+      // The window's status pill already shows the persistent DISCONNECTED state, so no
+      // separate banner is needed.
+      function handleDisconnect(status) {
         const sensor = status && status.sensor === "loadcell" ? "loadcell" : "actuator";
-        if (bannerId) showDisconnectBanner(bannerId, sensor);
         if (sensor === "loadcell") showLoadCellDisconnectDialog(status && status.message);
         else showDisconnectDialog(status && status.message);
       }

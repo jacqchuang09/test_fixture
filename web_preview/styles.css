@@ -46,35 +46,6 @@
         margin: 0 auto 20px;
       }
 
-      /* persistent disconnected banner, shown at the top of a test window while the
-         Zaber or load cell is dropped. It reflects state only - there is deliberately
-         no background reconnect poll (see showDisconnectDialog in shared.js): a poll
-         would keep reopening the COM port and fight the Zaber Launcher while the
-         operator re-homes. The banner clears at the next successful Start. Red so a
-         dismissed dialog can never hide the condition. */
-      .disconnect-banner {
-        display: flex;
-        align-items: center;
-        gap: 9px;
-        margin-bottom: 12px;
-        padding: 11px 14px;
-        border: 1px solid var(--red);
-        border-left: 4px solid var(--red);
-        border-radius: 8px;
-        background: #fdeceb;
-        color: var(--red-dark);
-        font-weight: 600;
-        font-size: 14px;
-      }
-      .disconnect-banner::before {
-        content: "\26A0";   /* warning triangle */
-        font-size: 16px;
-        line-height: 1;
-      }
-      /* override the shared .hidden (display:none) with higher specificity so the
-         banner collapses when hidden even though it defaults to display:flex. */
-      .disconnect-banner.hidden { display: none; }
-
       .error-dialog {
         border: none;
         border-radius: 12px;
@@ -602,34 +573,47 @@
         font-size: 16px;
       }
 
+      /* Same flat block as the in-window status pill / disconnect banner: a
+         left-aligned rectangle with a colored left accent stripe, so a long message
+         wraps cleanly instead of ballooning into a rounded pill. The block still
+         centers on the page at its 920px width; only the color changes with tone. */
       .main-message {
         display: flex;
-        align-items: center;
+        align-items: baseline;
         margin: -12px auto 20px;
         width: min(920px, 100%);
-        min-height: 34px;
-        border-radius: 999px;
+        padding: 11px 14px;
+        border: 1px solid #b9d0ff;
+        border-left: 4px solid var(--blue);
+        border-radius: 8px;
         background: #eaf1ff;
         color: var(--blue-dark);
-        padding: 0 14px;
-        font-size: 16px;
+        text-align: left;
+        font-size: 15px;
         font-weight: 500;
         letter-spacing: 0;
+        line-height: 1.35;
       }
 
       .main-message.error {
         background: #fff5f7;
         color: #9f1239;
+        border-color: #f3c9d2;
+        border-left-color: var(--red);
       }
 
       .main-message.ok {
         background: #eaf7ea;
         color: var(--green-dark);
+        border-color: #b6e0b8;
+        border-left-color: var(--green);
       }
 
       .main-message.info {
         background: #eaf1ff;
         color: var(--blue-dark);
+        border-color: #b9d0ff;
+        border-left-color: var(--blue);
       }
 
       .main-message:empty {
@@ -663,10 +647,12 @@
         margin-top: 12px;
       }
 
-      /* Status messages at the top of testing windows (ready/running/stopped, etc.).
-         Same flat, full-width block as .disconnect-banner - a left-aligned rectangle
-         with a colored left accent stripe - so it wraps cleanly on two lines instead
-         of ballooning into a rounded pill. Only the color changes with state. */
+      /* Status messages at the top of testing windows (ready/running/stopped/
+         disconnected, etc.). A flat, full-width block - a left-aligned rectangle with a
+         colored left accent stripe - so it wraps cleanly on two lines instead of
+         ballooning into a rounded pill. Only the color changes with state. This pill IS
+         the disconnect notice (it shows the DISCONNECTED state), so there is no separate
+         banner. */
       .state-pill {
         display: flex;
         align-items: baseline;
