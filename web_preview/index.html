@@ -271,28 +271,6 @@
               </div>
             </div>
           </div>
-          <div class="graph-settings">
-            <label>
-              <span class="sensor-header">
-                <span class="label-text">Last Seconds to Display</span>
-                <span class="sensor-help" tabindex="0" data-tooltip="When Cumulative Time is off, the EM force graph shows only the last selected number of seconds. Scroll the graph to zoom.">i</span>
-              </span>
-              <span class="suffix-field">
-                <input id="emSecondsToDisplay" type="number" min="1" step="1" value="30" oninput="drawEmForceGraph()" />
-                <span class="suffix">s</span>
-              </span>
-            </label>
-            <label class="check">
-              <input id="emShowMarkers" type="checkbox" onchange="drawEmForceGraph()" />
-              <span>Show Markers</span>
-              <span class="sensor-help" tabindex="0" data-tooltip="Shows individual live force readings (one dot per sample) on top of the graph line. Off by default.">i</span>
-            </label>
-            <label class="check">
-              <input id="emCumulativeTime" type="checkbox" checked onchange="drawEmForceGraph()" />
-              <span>Cumulative Time</span>
-              <span class="sensor-help" tabindex="0" data-tooltip="When on, the EM graph shows the entire run from start to finish and ignores Last Seconds to Display.">i</span>
-            </label>
-          </div>
           <div class="mini-row">
             <button id="emStartButton" class="success" onclick="startEmTest()">▶ Start</button>
             <button id="emPauseButton" class="pause-button" onclick="pauseEmTest()" disabled>Ⅱ Pause</button>
@@ -584,23 +562,6 @@
           <div class="cyclical-graph-column">
             <div class="graph-wrap">
               <svg id="cyclicalGraph" viewBox="0 0 960 340" role="img" aria-label="Cyclical fatigue force waveform preview"></svg>
-            </div>
-            <div class="graph-settings">
-              <label>
-                <span class="sensor-header">
-                  <span class="label-text">Last Seconds to Display</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="When Cumulative Time is off, the fatigue graph shows only the last selected number of seconds. Scroll the graph to zoom.">i</span>
-                </span>
-                <span class="suffix-field">
-                  <input id="cyclicalSecondsToDisplay" type="number" min="1" step="1" value="30" oninput="drawCyclicalPreview()" />
-                  <span class="suffix">s</span>
-                </span>
-              </label>
-              <label class="check">
-                <input id="cyclicalCumulativeTime" type="checkbox" checked onchange="drawCyclicalPreview()" />
-                <span>Cumulative Time</span>
-                <span class="sensor-help" tabindex="0" data-tooltip="When on, the fatigue graph shows the entire run from start to finish and ignores Last Seconds to Display.">i</span>
-              </label>
             </div>
           </div>
         </div>
