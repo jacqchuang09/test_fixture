@@ -989,9 +989,25 @@
           reg.redraw();
         }, { passive: false });
         let pan = null;
+        let lastDown = { id: null, t: 0, x: 0, y: 0 };
         document.addEventListener("mousedown", (e) => {
           const reg = regFor(e.target);
           if (!reg || !_graphView[reg.svg.id]) return;
+          const now = Date.now();
+          // Manual double-click detection: the graph's SVG contents are replaced on every
+          // live redraw, so the browser's native dblclick often never fires (the two clicks
+          // land on different, freshly drawn child elements). Detect it from two quick
+          // mousedowns near the same spot and reset the view to the default.
+          if (lastDown.id === reg.svg.id && now - lastDown.t < 350 &&
+              Math.abs(e.clientX - lastDown.x) < 6 && Math.abs(e.clientY - lastDown.y) < 6) {
+            resetGraphZoom(reg.svg.id);
+            reg.redraw();
+            pan = null;
+            lastDown = { id: null, t: 0, x: 0, y: 0 };
+            e.preventDefault();
+            return;
+          }
+          lastDown = { id: reg.svg.id, t: now, x: e.clientX, y: e.clientY };
           pan = { id: reg.svg.id, insets: reg.insets, redraw: reg.redraw, x: e.clientX, y: e.clientY,
                   base: _graphZoom[reg.svg.id] || _graphView[reg.svg.id] };
           reg.svg.style.cursor = "grabbing";
@@ -1015,11 +1031,5 @@
         });
         document.addEventListener("mouseup", () => {
           if (pan) { const s = document.getElementById(pan.id); if (s) s.style.cursor = "crosshair"; pan = null; }
-        });
-        document.addEventListener("dblclick", (e) => {
-          const reg = regFor(e.target);
-          if (!reg) return;
-          resetGraphZoom(reg.svg.id);
-          reg.redraw();
         });
       })();
