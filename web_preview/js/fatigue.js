@@ -173,9 +173,9 @@
         cyclicalStartedAt = performance.now();
         setCyclicalControlsLocked(true);
         document.getElementById("cyclicalPauseButton").disabled = false;
-        // the actuator + load cell take a moment to initialize; show a clear wait
-        // state (controls already locked) until the cycling actually starts.
-        setStatePill("cyclicalState", "WAITING TO START", "initializing actuator and load cell - please wait…");
+        // No up-front wait pill: with the load cell already open the run starts right away
+        // and the pill would just blink. The poll shows WAITING TO START only if the
+        // backend is still initializing on the first tick.
         const result = await callApi("/api/start-cyclical", config());
         if (!result || !result.ok) {
           setCyclicalControlsLocked(false);

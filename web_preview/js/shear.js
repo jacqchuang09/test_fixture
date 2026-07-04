@@ -88,7 +88,8 @@
         document.getElementById("shearPauseButton").disabled = false;
         document.getElementById("shearAnalysisButton").disabled = true;
         document.getElementById("shearTestCloseButton").disabled = true;
-        setShearState("WAITING TO START", "initializing load cell - please wait…");
+        // The poll shows WAITING TO START only if the load cell is still initializing;
+        // when it is already open the capture starts immediately (no wait-pill blink).
         drawShearGraph();
         console.log("[shear] START - requesting live load-cell read from backend");
         const result = await callApi("/api/shear-start", {});

@@ -537,10 +537,13 @@ class RunEngine:
             # stale value), so halt the actuator the moment the cell is lost - do not keep
             # driving toward the sensor without a live over-force guard.
             if futek is not None and futek.lost():
+                # stop AND retract off the sensor (the Zaber is still connected, only the
+                # load cell dropped) - do not leave the rod pressed with no force guard.
                 self._stop_axis(axis)
-                msg = "Load cell disconnected during the move. Actuator stopped."
-                self._set(status="error", disconnect=True, sensor="loadcell", position=STATE.position_mm, message=msg)
-                return {"ok": False, "position": STATE.position_mm, "disconnect": True, "sensor": "loadcell", "message": msg}
+                self._home(axis)
+                msg = "Load cell disconnected during the move. Actuator stopped and returned home."
+                self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM, message=msg)
+                return {"ok": False, "position": HOME_MM, "disconnect": True, "sensor": "loadcell", "message": msg}
             force = abs(self._read_force(futek, max(0.0, STATE.position_mm - HOME_MM)))
             t = time.time() - t0
             trace.append([round(t, 4), round(force, 4)])
@@ -741,11 +744,14 @@ class RunEngine:
                 # ~0.4 s (3 bad reads or the staleness watchdog), so this stops the move
                 # promptly, not after it finishes.
                 if futek is not None and futek.lost():
+                    # Stop AND retract off the sensor. The Zaber is still connected (only
+                    # the load cell dropped), so home it - leaving the rod pressed into the
+                    # sensor with no force feedback is the unsafe state.
                     self._stop_axis(axis)
-                    self._set(status="error", disconnect=True, sensor="loadcell", position=STATE.position_mm,
-                              message="Load cell disconnected during the move. Actuator stopped.")
-                    return {"ok": False, "position": STATE.position_mm, "disconnect": True, "sensor": "loadcell",
-                            "message": "Load cell disconnected during the move. Actuator stopped."}
+                    self._home(axis)
+                    msg = "Load cell disconnected during the move. Actuator stopped and returned home."
+                    self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM, message=msg)
+                    return {"ok": False, "position": HOME_MM, "disconnect": True, "sensor": "loadcell", "message": msg}
                 depth = max(0.0, STATE.position_mm - HOME_MM)
                 f = self._read_force(futek, depth)
                 # ABSOLUTE force vs the resting baseline (positive for either polarity),

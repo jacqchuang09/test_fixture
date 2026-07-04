@@ -193,9 +193,10 @@
         document.getElementById("emTestCloseButton").disabled = true;
 
         emRunStartedAt = performance.now();
-        // the actuator + load cell take a moment to initialize; show a clear wait
-        // state (controls already locked above) until the run actually starts.
-        setStatePill("emState", "WAITING TO START", "initializing actuator and load cell - please wait…");
+        // Don't flash a "waiting/initializing" pill up front: when the load cell is
+        // already open the run flips straight to RUNNING and the wait pill would just
+        // blink for a frame. The poll below shows WAITING TO START only if the backend is
+        // still genuinely initializing (status === "waiting") on the first tick.
 
         const result = await callApi("/api/start-run", { run_number: emCurrentRun, redo_of: redoOf, reason: redoReason });
         if (!result || !result.ok) {

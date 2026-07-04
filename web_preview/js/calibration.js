@@ -176,8 +176,10 @@
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press
-        // would flood the stage with commands.
-        setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
+        // would flood the stage with commands. No wait pill here: the poll shows
+        // WAITING TO START only if the load cell is still initializing, so an
+        // already-open cell goes straight to the press without a pill blink.
+        setCalibrationControlsLocked(true);
         button.textContent = "Pushing... Target: 20 N";
 
         const finish = (text) => {

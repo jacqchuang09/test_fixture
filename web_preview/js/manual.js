@@ -250,7 +250,9 @@
         // the actuator, so the graphs update live (no faked values, no fixed timer).
         setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
-        setManualState("WAITING TO START", "initializing load cell - please wait…");
+        // No up-front wait pill: the manual window keeps the load cell open, so a move
+        // starts immediately and the pill would just blink. The poll below shows WAITING
+        // TO START only if the backend reports it is still initializing.
         const t0 = performance.now();
         let moveDone = false;    // stop a late status poll from re-showing MOVING after the move ends
         let lastStatus = "";
@@ -316,7 +318,8 @@
         if (!(await zaberStartGateOk())) return;
         setManualControlsLocked(true);
         document.getElementById("manualConfirmDragButton").disabled = true;
-        setManualState("WAITING TO START", "initializing load cell - please wait…");
+        // No up-front wait pill (see the distance move above): the poll shows WAITING TO
+        // START only if the backend is still initializing.
         const t0 = performance.now();
         let moveDone = false;
         let lastStatus = "";
@@ -591,9 +594,9 @@
         const startedAt = performance.now();
         console.log(`[calibration jog] START distance=${distance.toFixed(3)} mm  from ${currentPosition.toFixed(2)} -> ${target.toFixed(2)} mm`);
         // lock the whole calibration window while the stage travels (queueing more
-        // commands would flood the Zaber), and show WAITING TO START while the load
-        // cell initializes, then MOVING during the continuous travel.
-        setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
+        // commands would flood the Zaber). No up-front wait pill - the poll shows WAITING
+        // TO START only if the load cell is still initializing, then MOVING during travel.
+        setCalibrationControlsLocked(true);
         addCalibrationUpdate(`moving ${distance < 0 ? "up" : "down"} by ${Math.abs(distance).toFixed(2)} mm…`);
         let lastStatus = "";
         const pollTimer = setInterval(async () => {
