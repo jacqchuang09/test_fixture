@@ -886,13 +886,20 @@
       }
 
       // ask python for the live serial ports and rebuild the COM port dropdown,
-      // mirroring emilio's comport combobox. then connect to the selected one.
-      async function refreshComPorts() {
+      // mirroring emilio's comport combobox. Called once on load and then polled (see
+      // startComPortPolling) so a cable plugged in AFTER the program opened still shows up.
+      // To avoid churn it only rebuilds when the port set actually changed, and never while
+      // the user has the dropdown focused/open (that would clobber their interaction). Pass
+      // force=true for the initial build.
+      async function refreshComPorts(force = false) {
         const select = document.getElementById("comport");
         if (!select) return;
-        const previous = select.value;
         const result = await callApi("/api/list-ports");
         const ports = (result && result.ports) || [];
+        const current = Array.from(select.options).map((o) => o.value).filter((v) => v);
+        const changed = current.length !== ports.length || !current.every((v) => ports.includes(v));
+        if (!force && (!changed || document.activeElement === select)) return;
+        const previous = select.value;
         select.innerHTML = "";
         // placeholder first: the user must actively pick a port (no default).
         const placeholder = document.createElement("option");
@@ -910,6 +917,15 @@
         updateComPortPlaceholder();
         updateFolderInfoTag();
         // do NOT auto-connect on load - only connect once the user picks a port.
+      }
+
+      // keep the COM port list live: re-poll every 2 s so a device plugged in after the
+      // program opened appears on its own. refreshComPorts only rebuilds on a real change,
+      // so this is cheap and never disrupts an open dropdown or the current selection.
+      let comPortPollTimer = null;
+      function startComPortPolling() {
+        if (comPortPollTimer) return;
+        comPortPollTimer = setInterval(() => refreshComPorts(), 2000);
       }
 
       // gray out the dropdown while it shows the "Select COM port" placeholder.
@@ -1135,4 +1151,5 @@
       updateTestConfigState();
       updateFolderInfoTag();
       setEmStatus([`[${stamp()}] IDLE: system initialized.`, `[${stamp()}] READY: waiting for test to begin.`, "Run Number | Time (s) | Force (N)"]);
-      refreshComPorts();
+      refreshComPorts(true);
+      startComPortPolling();
