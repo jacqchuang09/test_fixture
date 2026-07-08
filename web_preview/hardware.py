@@ -76,6 +76,19 @@ class HardwareState:
             self._read_fail_count += 1
             if self._read_fail_count >= 3:
                 self.comms_lost = True
+                self.connection_lost = True
+                # Release the dead connection so the OS frees the COM port for a later
+                # reconnect. Leaving the stale handle open (a) keeps the port locked so
+                # a re-open fails, and (b) makes try_reconnect() falsely report
+                # "connected" and never re-probe. Swap to None FIRST so any concurrent
+                # axis access sees the loss immediately, then close the old handle.
+                # Stay disconnected - do NOT silently fall back to simulated on a real rig.
+                dead, self.cli = self.cli, None
+                if dead is not None:
+                    try:
+                        dead.disconnect()
+                    except Exception:
+                        pass
         return self.position_mm
 
     def _set_default_speed(self, mm_s):
@@ -168,7 +181,11 @@ class HardwareState:
         # used by the live reconnect watcher after a disconnect: if the actuator is
         # already live, report that; otherwise try to reopen the last known port.
         # Success clears connection_lost (inside connect_zaber).
-        if self.cli is not None and not self.simulated:
+        # VERIFY the existing connection actually answers before claiming connected -
+        # a stale handle left from a disconnect would otherwise report a false
+        # "connected" and never re-open the port. ping_zaber() clears the stale
+        # handle's lost flags on success and reports the truth on failure.
+        if self.cli is not None and not self.simulated and self.ping_zaber():
             return {"ok": True, "connected": True, "comport": self.comport,
                     "message": f"Zaber connected on {self.comport}."}
         if not self.comport:
