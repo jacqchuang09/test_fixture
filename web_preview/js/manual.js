@@ -26,6 +26,25 @@
         manualStatusLines.push(`[${stamp()}] ${state}: ${message}`);
       }
 
+      // A Zaber (or load-cell) drop mid-move ends the manual session the same way a
+      // disconnect ends an EM/Fatigue run: stop the live sampler and re-arm Start.
+      // Without this the ~10 Hz sampler keeps polling a dead/simulated backend and the
+      // live graph never resumes even after the operator reconnects. Pressing Start
+      // afterward re-runs the connection gate (which reconnects the actuator) and
+      // starts a fresh live readout. manualData is kept so a partial trace can still be
+      // analyzed. handleDisconnect routes to the right reconnect dialog.
+      function handleManualDisconnect(result) {
+        stopManualSampling();
+        setManualSessionActive(false);   // re-enables Start, disables the move buttons
+        document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
+        const loadCell = result && result.sensor === "loadcell";
+        setManualState("DISCONNECTED",
+          loadCell
+            ? "load cell disconnected - reconnect it, then press Start to resume the live readout."
+            : "actuator disconnected - use the Zaber Launcher, then press Start to resume the live readout.");
+        handleDisconnect(result);
+      }
+
       function resetManualTest() {
         if (manualMotionTimer) {
           clearInterval(manualMotionTimer);
@@ -300,8 +319,11 @@
           return;
         }
         if (!result || result.ok === false || result.disconnect) {
-          if (result && result.disconnect) handleDisconnect(result);
-          setManualState("ERROR", (result && result.message) || "Manual move failed.");
+          if (result && result.disconnect) {
+            handleManualDisconnect(result);
+          } else {
+            setManualState("ERROR", (result && result.message) || "Manual move failed.");
+          }
           return;
         }
         const sim = result.simulated ? " (simulated)" : "";
@@ -369,8 +391,11 @@
           return;
         }
         if (!result || result.ok === false || result.disconnect) {
-          if (result && result.disconnect) handleDisconnect(result);
-          setManualState("ERROR", (result && result.message) || "Manual force move failed.");
+          if (result && result.disconnect) {
+            handleManualDisconnect(result);
+          } else {
+            setManualState("ERROR", (result && result.message) || "Manual force move failed.");
+          }
           return;
         }
         const sim = result.simulated ? " (simulated)" : "";
@@ -584,6 +609,11 @@
           addCalibrationUpdate(`ERROR: move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
           return;
         }
+        // Per-jog connection checkpoint (same gate the Fuji test and the manual-window
+        // moves use). After a disconnect this is what actually reconnects the actuator:
+        // without it a jog silently drives a simulated stage and the Zaber never comes
+        // back. If it is still gone the jog is hard-blocked with the reconnect dialog.
+        if (!(await zaberStartGateOk())) return;
         calibrationMoveInFlight = true;
         // moveDone guards against a late status poll re-locking the controls AFTER the
         // move has finished: setInterval fires an async callback that awaits /api/run-
