@@ -605,7 +605,7 @@ class RunEngine:
                     STATE._read_position()    # stream the live position (3-strike comms_lost inside)
                     if STATE.comms_lost:
                         print(f"[calibration] manual_move: COMMS LOST at pos={STATE.position_mm:.2f} mm")
-                        self._retract_home_best_effort(axis)
+                        self._stop_axis(axis)
                         self._set(status="error", disconnect=True, position=STATE.position_mm,
                                   message="Actuator connection lost. Check the cable before continuing.")
                         return {"ok": False, "position": STATE.position_mm, "disconnect": True,
@@ -733,7 +733,7 @@ class RunEngine:
                 else:
                     STATE._read_position()
                 if STATE.comms_lost:
-                    self._retract_home_best_effort(axis)
+                    self._stop_axis(axis)
                     self._set(status="error", disconnect=True, position=STATE.position_mm,
                               message="Actuator connection lost. Check the cable before continuing.")
                     return {"ok": False, "position": STATE.position_mm, "disconnect": True,
@@ -1567,32 +1567,13 @@ class RunEngine:
             except Exception:
                 pass
 
-    def _retract_home_best_effort(self, axis):
-        # Retract to the home baseline after a disconnect. Safe even with the position
-        # "unknown": HOME_MM (17 mm) is the RETRACTED baseline and the actuator only ever
-        # sits at or below it toward the sensor (contact ~28 mm), so an absolute move to
-        # HOME can only pull the rod OFF the sensor - never into it. Fire-and-forget
-        # (wait_until_idle=False): the device finishes the move on its own even if we then
-        # drop the connection, and a truly dead link just makes this a no-op. Stop first so
-        # the retract supersedes the current move immediately.
-        if axis is None:
-            return
-        try:
-            axis.stop()
-        except Exception:
-            pass
-        try:
-            axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=False)
-        except Exception:
-            pass
-
     def _zaber_disconnect_safe_state(self):
-        # Safe state after a Zaber comms loss: stop and command a retract to the home
-        # baseline (see _retract_home_best_effort - moving to HOME only backs the rod off
-        # the sensor, so it is safe even with the position unknown), then mark the
-        # connection dead so the next run must re-initialize and report the error. The
-        # in-progress run is discarded (no data saved).
-        self._retract_home_best_effort(STATE.axis)
+        # Safe state after a Zaber comms loss: stop the actuator in place (best-effort;
+        # a dead link just makes this a no-op). We do NOT command a move to home - a
+        # disconnected actuator can't be driven anyway, so it stays where it is until the
+        # operator moves it. Then mark the connection dead so the next run must
+        # re-initialize and report the error. The in-progress run is discarded (no data).
+        self._stop_axis(STATE.axis)
         STATE.cli = None
         STATE.simulated = True
         STATE.connection_lost = True
