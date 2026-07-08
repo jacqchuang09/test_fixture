@@ -42,17 +42,19 @@ def main():
         # Open the manual window. Its auto-sampler collects force readings into
         # manualData via /api/read-force -- this performs NO motion.
         driver.execute_script("openManualTest()")
-        time.sleep(3.0)
+        time.sleep(1.0)
 
-        n = driver.execute_script("return (typeof manualData !== 'undefined' && manualData) ? manualData.length : -1")
-        print(f"manualData.length after first wait: {n}")
-
-        # If data didn't seed, wait longer once.
-        if n is None or n <= 1:
-            print("Not enough data; waiting an extra 5s and retrying...")
-            time.sleep(5.0)
-            n = driver.execute_script("return (typeof manualData !== 'undefined' && manualData) ? manualData.length : -1")
-            print(f"manualData.length after retry wait: {n}")
+        # The manual window is now Start-gated: it opens idle and records nothing
+        # until Start. For UI-evidence of the analysis plots we seed a simulated
+        # compression curve into manualData (NO hardware, NO Start, NO motion) and
+        # analyze that -- the same in-memory path a real recording feeds.
+        driver.execute_script(
+            "manualData.length=0;"
+            "for(var i=0;i<=80;i++){var t=i*0.1;var f=Math.max(0,22*Math.sin(Math.PI*i/80));"
+            "manualData.push({time:t,force:f,capacitance:null});}"
+        )
+        n = driver.execute_script("return manualData.length")
+        print(f"seeded manualData.length: {n}")
 
         # Run analysis (analysis only -- no motion).
         driver.execute_script("performManualAnalysis()")
