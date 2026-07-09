@@ -5,6 +5,7 @@
 
 import sys
 import threading
+import time
 from pathlib import Path
 
 # Make run_web_gui importable whether running from source or from a frozen bundle.
@@ -20,6 +21,7 @@ import webview
 
 import run_web_gui
 from run_engine import ENGINE
+from hardware import STATE
 
 
 def main():
@@ -51,19 +53,30 @@ def main():
     run_web_gui.set_desktop_window(window)
 
     def _on_closing():
-        # Do not let the operator close the whole app while a test run is
-        # physically in progress - that would abandon the actuator mid-motion.
-        # Returning False cancels the close; a paused/idle test closes normally.
-        if ENGINE.is_running():
-            try:
-                window.evaluate_js(
-                    "window.showErrorDialog && showErrorDialog("
-                    "'A test is running. Pause or stop it before closing the app.',"
-                    "'Test in progress')"
-                )
-            except Exception:
-                pass
+        # Closing the whole app while a test run is physically in progress would abandon
+        # the actuator mid-motion. Ask with pywebview's NATIVE confirmation dialog rather
+        # than the in-page one: while the OS is trying to close the window the in-page
+        # dialog is not reliably clickable (its OK button appears dead), and it is a
+        # dead-end anyway (dismissing it neither closes the app nor stops the test). The
+        # native dialog gives a real, working choice:
+        #   Cancel -> keep the app open, the test keeps running.
+        #   OK     -> stop the run safely (the run loop halts and returns the actuator to
+        #             home), WAIT for that to finish, then let the app close.
+        if not ENGINE.is_running():
+            return True
+        close_anyway = window.create_confirmation_dialog(
+            "Test in progress",
+            "A test is running. Closing will stop it and return the actuator to a safe "
+            "position. Close the app anyway?",
+        )
+        if not close_anyway:
             return False
+        STATE.stop()   # request a safe stop; the run loop halts and homes the actuator
+        # Hold the close until the run thread has actually finished homing, so the
+        # actuator is never left mid-motion when the process exits and the server stops.
+        deadline = time.time() + 30.0
+        while ENGINE.is_running() and time.time() < deadline:
+            time.sleep(0.1)
         return True
 
     window.events.closing += _on_closing
