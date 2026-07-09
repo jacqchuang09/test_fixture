@@ -135,7 +135,15 @@
       function calibrationMove(direction) {
         saveCalibrationIncrement();
         const input = document.getElementById("incrementDistance");
-        const increment = Number(input.value || 0.1);
+        // A type=number field reports value="" for text it can't parse (".", "-", "+",
+        // "1.2.3"). The old `Number(input.value || 0.1)` treated that empty value as the
+        // 0.1 default and jogged anyway; validity.badInput is the browser's flag for
+        // un-parseable numeric input, so a non-numeric entry is blocked as intended.
+        if ((input.validity && input.validity.badInput) || input.value.trim() === "") {
+          addCalibrationUpdate("ERROR: increment distance must be a valid number.");
+          return;
+        }
+        const increment = Number(input.value);
         if (!Number.isFinite(increment)) {
           addCalibrationUpdate("ERROR: increment distance must be a valid number.");
           return;
