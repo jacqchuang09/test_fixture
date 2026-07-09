@@ -1123,28 +1123,6 @@
         font-weight: 650;
       }
 
-      /* app-shutdown overlay: an indeterminate bar shown while the app finishes stopping
-         the actuator on close. Reuses the shared error-dialog card; only the moving bar
-         and its track (matching the progress-track look) are new. transform-only motion. */
-      .shutdown-dialog .shutdown-track {
-        height: 8px;
-        margin-top: 6px;
-        overflow: hidden;
-        border-radius: 999px;
-        background: #edf3ff;
-      }
-      .shutdown-dialog .shutdown-fill {
-        width: 38%;
-        height: 100%;
-        border-radius: inherit;
-        background: var(--blue);
-        animation: shutdown-slide 1.1s ease-in-out infinite;
-      }
-      @keyframes shutdown-slide {
-        0%   { transform: translateX(-130%); }
-        100% { transform: translateX(360%); }
-      }
-
       /* dialogs are the popup windows for tests, calibration, analysis, and existing-folder choices. */
       dialog {
         width: min(820px, calc(100% - 40px));
