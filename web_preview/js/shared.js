@@ -551,6 +551,29 @@
           "Load cell disconnected");
       }
 
+      // Shown by the desktop launcher (app_desktop.py) via evaluate_js while the app is
+      // closing during active motion: the backend stops the run/jog and returns the
+      // actuator home, then closes the window. Shown as a modal so it sits above any open
+      // test window (top layer). No buttons - the launcher destroys the window once the
+      // actuator is safe. Idempotent so repeated close attempts don't throw.
+      function showShutdownOverlay(message) {
+        const overlay = document.getElementById("shutdownOverlay");
+        if (!overlay) return;
+        if (message) {
+          const copy = document.getElementById("shutdownCopy");
+          if (copy) copy.textContent = message;
+        }
+        try {
+          if (typeof overlay.showModal === "function") {
+            if (!overlay.open) overlay.showModal();
+          } else {
+            overlay.setAttribute("open", "");
+          }
+        } catch (error) {
+          overlay.setAttribute("open", "");
+        }
+      }
+
       // Route a backend disconnect (status.disconnect === true) to the correct dialog.
       // sensor === "loadcell" means the FUTEK dropped; anything else is the actuator.
       // The window's status pill already shows the persistent DISCONNECTED state, so no

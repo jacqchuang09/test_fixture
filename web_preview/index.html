@@ -80,6 +80,21 @@
         </div>
       </dialog>
 
+      <!-- app-shutdown overlay: shown by the desktop launcher while the app is closing
+           during active motion. The backend stops the run/jog and returns the actuator
+           home, then closes the window; this tells the operator why the window is still
+           open. No buttons - it closes itself once the actuator is safe. -->
+      <dialog id="shutdownOverlay" class="error-dialog shutdown-dialog">
+        <div class="error-dialog-head">
+          <span class="error-dialog-icon" style="background: var(--blue);">↺</span>
+          <h2>Closing the app</h2>
+        </div>
+        <div class="error-dialog-body">
+          <p id="shutdownCopy" class="error-dialog-message">Stopping the test and returning the actuator to its home position. The app will close automatically once the actuator is safe.</p>
+          <div class="shutdown-track"><div class="shutdown-fill"></div></div>
+        </div>
+      </dialog>
+
       <div id="mainMessage" class="main-message"></div>
 
       <div class="layout">
