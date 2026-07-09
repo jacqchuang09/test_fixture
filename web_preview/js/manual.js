@@ -612,8 +612,20 @@
         // Per-jog connection checkpoint (same gate the Fuji test and the manual-window
         // moves use). After a disconnect this is what actually reconnects the actuator:
         // without it a jog silently drives a simulated stage and the Zaber never comes
-        // back. If it is still gone the jog is hard-blocked with the reconnect dialog.
-        if (!(await zaberStartGateOk())) return;
+        // back. While disconnected, lock the controls and show a RECONNECTING pill so the
+        // operator can't queue more actions during the (possibly slow) reconnect. If the
+        // Zaber is still gone the jog is hard-blocked (reconnect dialog) and the window
+        // stays in the locked-look DISCONNECTED state; on success the jog proceeds.
+        if (calibrationDisconnected) {
+          setCalibrationControlsLocked(true, "RECONNECTING", "reconnecting to the Zaber - please wait…", "discarded");
+        }
+        if (!(await zaberStartGateOk())) {
+          if (calibrationDisconnected) {
+            setCalibrationControlsLocked(false, "DISCONNECTED", "actuator disconnected - reconnect it in the Zaber Launcher, then press a control to retry.", "discarded");
+          }
+          return;
+        }
+        calibrationDisconnected = false;
         calibrationMoveInFlight = true;
         // moveDone guards against a late status poll re-locking the controls AFTER the
         // move has finished: setInterval fires an async callback that awaits /api/run-
@@ -647,6 +659,7 @@
           }
         }, 100);
         let disconnected = false;
+        let disconnectSensor = null;
         try {
           const result = await moveApiWithTimeout({ distance }, `Manual control: Moving stage ${distance > 0 ? "DOWN" : "UP"}`);
           console.log(`[calibration jog] /api/move returned after ${Math.round(performance.now() - startedAt)} ms`, result);
@@ -655,6 +668,7 @@
             addCalibrationUpdate("WARNING: move timed out - controls unlocked. Check the actuator.");
           } else if (result && result.disconnect) {
             disconnected = true;
+            disconnectSensor = result.sensor;
             addCalibrationUpdate(result.message || "Actuator connection lost. Check the cable before continuing.");
             handleDisconnect(result);
           } else if (result && result.stopped_for_safety) {
@@ -671,8 +685,17 @@
           clearInterval(pollTimer);
           calibrationMoveInFlight = false;
           if (disconnected) {
-            setCalibrationControlsLocked(false, "DISCONNECTED", "actuator disconnected - use the Zaber Launcher.", "discarded");
+            // Only a Zaber (actuator) loss needs the reconnect gate + RECONNECTING pill;
+            // a load-cell drop leaves the Zaber live, so the next press would pass the
+            // Zaber check instantly (no reconnect period to show).
+            const loadCell = disconnectSensor === "loadcell";
+            calibrationDisconnected = !loadCell;
+            setCalibrationControlsLocked(false, "DISCONNECTED",
+              loadCell ? "load cell disconnected - reconnect it, then press a control to retry."
+                       : "actuator disconnected - use the Zaber Launcher, then press a control to reconnect.",
+              "discarded");
           } else {
+            calibrationDisconnected = false;
             setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
           }
           console.log(`[calibration jog] DONE (disconnected=${disconnected}) - controls unlocked`);

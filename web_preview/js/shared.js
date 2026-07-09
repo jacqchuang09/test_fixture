@@ -56,6 +56,10 @@
       // true while a real Zaber jog/home is in progress; the position readout
       // updates only after the move finishes, so block overlapping moves.
       let calibrationMoveInFlight = false;
+      // true after the calibration window loses the Zaber mid-action. While set,
+      // the next jog/Fuji press first runs a reconnect: the controls stay locked
+      // and a RECONNECTING pill shows until the connection check resolves.
+      let calibrationDisconnected = false;
       let fujiTimer = null;
       let fujiStartedAt = null;
       let calibrationLines = ["[ready] calibration window ready."];

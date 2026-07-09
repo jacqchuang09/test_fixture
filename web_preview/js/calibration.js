@@ -171,8 +171,19 @@
         refreshExtrusionPlaceholder();
         // Fuji film drives the actuator + load cell to a 20 N target. Require a
         // live Zaber on a real rig (soft in simulation). A confirmed connection
-        // here clears the disconnect banner.
-        if (!(await zaberStartGateOk())) return;
+        // here clears the disconnect banner. While disconnected, lock the controls
+        // and show a RECONNECTING pill during the (possibly slow) reconnect so the
+        // operator can't queue actions; if still gone, stay in DISCONNECTED.
+        if (calibrationDisconnected) {
+          setCalibrationControlsLocked(true, "RECONNECTING", "reconnecting to the Zaber - please wait…", "discarded");
+        }
+        if (!(await zaberStartGateOk())) {
+          if (calibrationDisconnected) {
+            setCalibrationControlsLocked(false, "DISCONNECTED", "actuator disconnected - reconnect it in the Zaber Launcher, then press a control to retry.", "discarded");
+          }
+          return;
+        }
+        calibrationDisconnected = false;
         setForceReadout(0);
         setCalibrationOutput([`[${stamp()}] Fuji Film Test started.`, "Time (s) | Force (N)", "0.000 s | 0.0 N"]);
         // lock ALL calibration controls while the press runs - jogging mid-press
@@ -225,6 +236,9 @@
               // actuator drop), then start again. finish() already unlocked the
               // controls. handleDisconnect picks the right dialog + raises the banner.
               const loadCell = status.sensor === "loadcell";
+              // Only a Zaber loss arms the reconnect gate + RECONNECTING pill; a load-cell
+              // drop leaves the Zaber live, so the next press passes the check instantly.
+              calibrationDisconnected = !loadCell;
               setStatePill("calibrationState", "DISCONNECTED",
                 loadCell ? "load cell disconnected - reconnect it." : "actuator disconnected - use the Zaber Launcher.",
                 "discarded");

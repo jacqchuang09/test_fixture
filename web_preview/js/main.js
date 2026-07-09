@@ -859,6 +859,9 @@
             "Connect a Zaber first");
           return;
         }
+        // opening passed the connection check above, so clear any stale disconnect flag
+        // (a prior session may have left it set) - the window opens in a live state.
+        calibrationDisconnected = false;
         initializeCalibrationSettings();
         setPositionReadout(17);
         calibrationModal.showModal();
@@ -870,18 +873,48 @@
 
       async function homeAxis() {
         if (calibrationMoveInFlight) return;
+        // If the Zaber was lost, Home must reconnect first (like the jog/Fuji). While
+        // disconnected, lock the controls and show a RECONNECTING pill during the check
+        // so nothing can be queued; if it is still gone, stay DISCONNECTED. (No auto
+        // re-home: the operator re-homes via the Zaber Launcher.)
+        if (calibrationDisconnected) {
+          setCalibrationControlsLocked(true, "RECONNECTING", "reconnecting to the Zaber - please wait…", "discarded");
+          if (!(await zaberStartGateOk())) {
+            setCalibrationControlsLocked(false, "DISCONNECTED", "actuator disconnected - reconnect it in the Zaber Launcher, then press a control to retry.", "discarded");
+            return;
+          }
+          calibrationDisconnected = false;
+        }
         setForceReadout(0);
         addCalibrationUpdate("returning to home position…");
         calibrationMoveInFlight = true;
         setCalibrationControlsLocked(true, "HOMING", "actuator returning to home - please wait", "discarded");
+        let disconnected = false;
+        let disconnectSensor = null;
         try {
           const result = await callApi("/api/home", {}, "Manual control: Returning to HOME position");
-          // update the readout only once the stage has reached home.
-          setPositionReadout(result && typeof result.position === "number" ? result.position : 17);
-          addCalibrationUpdate("at home position.");
+          if (result && result.disconnect) {
+            disconnected = true;
+            disconnectSensor = result.sensor;
+            addCalibrationUpdate(result.message || "Actuator connection lost. Check the cable before continuing.");
+            handleDisconnect(result);
+          } else {
+            // update the readout only once the stage has reached home.
+            setPositionReadout(result && typeof result.position === "number" ? result.position : 17);
+            addCalibrationUpdate("at home position.");
+          }
         } finally {
           calibrationMoveInFlight = false;
-          setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
+          if (disconnected) {
+            const loadCell = disconnectSensor === "loadcell";
+            calibrationDisconnected = !loadCell;
+            setCalibrationControlsLocked(false, "DISCONNECTED",
+              loadCell ? "load cell disconnected - reconnect it, then press a control to retry."
+                       : "actuator disconnected - use the Zaber Launcher, then press a control to reconnect.",
+              "discarded");
+          } else {
+            setCalibrationControlsLocked(false, "READY", "actuator idle. controls ready.", "kept");
+          }
         }
       }
 
