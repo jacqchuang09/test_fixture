@@ -367,25 +367,18 @@
         await callApi("/api/pause");
       }
 
-      // Closing the EM test window. If a run is physically in progress, warn first (the
-      // same Stop & Close flow the Fatigue and Manual windows use, 1.5.x): Confirm stops
-      // the run (the backend halts and returns the actuator to a safe position) and
-      // closes; Cancel leaves the window open with the run still going. Either way the
-      // backend is told to stop/reset so the engine is never left thinking a test is
-      // still running (which would block the next test).
+      // Closing the EM test window: blocked while a run is physically in progress,
+      // and otherwise it tells the backend to stop/reset so the engine is never left
+      // thinking a test is still running (which would block the next test).
       async function closeEmTestWindow() {
         if (emRunTimer || emReturnHomeTimer) {
-          const ok = await promptConfirm(
-            "An EM run is in progress. Closing will stop the run and return the actuator to a safe position. Continue?",
-            { title: "Test in progress", confirmLabel: "Stop & Close", cancelLabel: "Cancel" });
-          if (!ok) return;
-          clearInterval(emRunTimer);
-          clearTimeout(emReturnHomeTimer);
-          emRunTimer = null;
-          emReturnHomeTimer = null;
+          showErrorDialog(
+            "A run is in progress. Pause the run before closing the test window.",
+            "Test in progress");
+          return;
         }
         stopReconnectWatch();
-        await callApi("/api/stop", {});   // halt + reset the engine (returns the actuator home)
+        await callApi("/api/stop", {});
         resetGraphZoom("emForceGraph");   // clear any scroll-zoom so the next window opens normal
         emTestModal.close();
       }
