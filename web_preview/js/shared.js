@@ -388,8 +388,14 @@
         const messageEl = document.getElementById("errorDialogMessage");
         if (asHtml) messageEl.innerHTML = message;
         else messageEl.textContent = message;
-        if (typeof dialog.showModal === "function") dialog.showModal();
-        else dialog.setAttribute("open", "");
+        // showModal() throws if the dialog is already open (e.g. a move's status poll
+        // opened it the instant a load cell dropped, then the move result tried again).
+        // Updating the text above and skipping a second showModal keeps it idempotent.
+        if (typeof dialog.showModal === "function") {
+          if (!dialog.open) dialog.showModal();
+        } else {
+          dialog.setAttribute("open", "");
+        }
       }
 
       // safety-stop dialog: shows the reason a run was halted (force spike, force

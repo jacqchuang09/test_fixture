@@ -35,7 +35,12 @@
       // analyzed. handleDisconnect routes to the right reconnect dialog.
       function handleManualDisconnect(result) {
         stopManualSampling();
-        setManualSessionActive(false);   // re-enables Start, disables the move buttons
+        // Release the move-time control lock first (re-enables the setup inputs), then
+        // re-arm Start. Doing the unlock here makes this self-contained, so it is correct
+        // whether called from the move result (already unlocked) or from the status poll
+        // the instant a load cell drops (still locked, mid-move).
+        setManualControlsLocked(false);
+        setManualSessionActive(false);   // re-arm Start, disable the motion buttons
         document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
         const loadCell = result && result.sensor === "loadcell";
         setManualState("DISCONNECTED",
@@ -274,6 +279,7 @@
         // TO START only if the backend reports it is still initializing.
         const t0 = performance.now();
         let moveDone = false;    // stop a late status poll from re-showing MOVING after the move ends
+        let manualDisconnectShown = false;   // a load-cell drop pops the dialog from the poll; don't repeat on the result
         let lastStatus = "";
         console.log(`[manual move] START "${description}"  distance=${distance.toFixed(3)} mm  (force mode drives until the load cell reads the target)`);
         manualMotionTimer = setInterval(async () => {
@@ -281,6 +287,18 @@
           const status = await callApi("/api/run-status");
           if (moveDone) return;
           if (!status || !status.ok) return;
+          if (status.disconnect && status.sensor === "loadcell") {
+            // Pop the load-cell dialog the instant it drops (the backend is still homing).
+            // The full session teardown + Start re-arm happens on the move result below,
+            // AFTER the home finishes, so Start is never clickable while the actuator is
+            // still returning home. The dialog is idempotent, so re-showing it is a no-op.
+            if (!manualDisconnectShown) {
+              manualDisconnectShown = true;
+              setManualState("DISCONNECTED", "load cell disconnected - returning home…");
+              handleDisconnect(status);
+            }
+            return;
+          }
           if (status.status !== lastStatus) {
             console.log(`[manual move] status -> ${status.status}  force=${Number(status.force || 0).toFixed(2)} N  pos=${Number(status.position || 0).toFixed(2)} mm  simulated=${status.simulated}`);
             lastStatus = status.status;
@@ -344,6 +362,7 @@
         // START only if the backend is still initializing.
         const t0 = performance.now();
         let moveDone = false;
+        let manualDisconnectShown = false;   // a load-cell drop pops the dialog from the poll; don't repeat on the result
         let lastStatus = "";
         console.log(`[manual force] START "${description}"  target=${targetForce.toFixed(2)} N  dir=${direction}`);
         manualMotionTimer = setInterval(async () => {
@@ -351,6 +370,16 @@
           const status = await callApi("/api/run-status");
           if (moveDone) return;
           if (!status || !status.ok) return;
+          if (status.disconnect && status.sensor === "loadcell") {
+            // Pop the load-cell dialog the instant it drops (backend is still homing); the
+            // teardown + Start re-arm happens on the move result, after the home. Idempotent.
+            if (!manualDisconnectShown) {
+              manualDisconnectShown = true;
+              setManualState("DISCONNECTED", "load cell disconnected - returning home…");
+              handleDisconnect(status);
+            }
+            return;
+          }
           if (status.status !== lastStatus) {
             console.log(`[manual force] status -> ${status.status}  force=${Number(status.force || 0).toFixed(2)} N  pos=${Number(status.position || 0).toFixed(2)} mm  simulated=${status.simulated}`);
             lastStatus = status.status;
@@ -633,6 +662,7 @@
         // setCalibrationControlsLocked(true, ...) after we unlocked - leaving the window
         // stuck on "MOVING" with everything disabled. This was the intermittent bug.
         let moveDone = false;
+        let disconnectShown = false;   // a load-cell drop pops the dialog from the poll; don't repeat it on the result
         const startedAt = performance.now();
         console.log(`[calibration jog] START distance=${distance.toFixed(3)} mm  from ${currentPosition.toFixed(2)} -> ${target.toFixed(2)} mm`);
         // lock the whole calibration window while the stage travels (queueing more
@@ -646,6 +676,16 @@
           const status = await callApi("/api/run-status");
           if (moveDone) return;                       // it finished while this poll was in flight - do NOT re-lock
           if (!status || !status.ok) return;
+          if (status.disconnect && status.sensor === "loadcell" && !disconnectShown) {
+            // A load-cell drop is the only disconnect with a retract-home delay; the
+            // backend surfaces it the instant it happens (while still homing), so pop the
+            // dialog now instead of waiting for the move result. A Zaber loss stops in
+            // place and returns immediately, so it keeps its result-based handling below.
+            disconnectShown = true;
+            setCalibrationControlsLocked(true, "DISCONNECTED", "load cell disconnected - returning home…", "discarded");
+            handleDisconnect(status);
+            return;
+          }
           if (status.status !== lastStatus) {
             console.log(`[calibration jog] status -> ${status.status}  pos=${Number(status.position || 0).toFixed(2)} mm  force=${Number(status.force || 0).toFixed(2)} N`);
             lastStatus = status.status;
@@ -670,7 +710,7 @@
             disconnected = true;
             disconnectSensor = result.sensor;
             addCalibrationUpdate(result.message || "Actuator connection lost. Check the cable before continuing.");
-            handleDisconnect(result);
+            if (!disconnectShown) handleDisconnect(result);   // poll may have already shown it (load-cell drop)
           } else if (result && result.stopped_for_safety) {
             if (typeof result.position === "number") setPositionReadout(result.position);
             addCalibrationUpdate(result.message || "Force limit reached. Move stopped for safety.");

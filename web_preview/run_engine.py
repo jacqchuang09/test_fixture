@@ -421,6 +421,24 @@ class RunEngine:
                 pass
         STATE.position_mm = HOME_MM
 
+    def _loadcell_lost_home(self, axis, final_message):
+        # A load cell that drops mid-move is surfaced to the UI the MOMENT it is lost -
+        # before the retract-home, which takes a second or two - so the disconnect dialog
+        # pops immediately, the same timing as a Zaber loss (which stops in place). The
+        # early _set flips status to error/disconnect right after the stop, so the
+        # run-status poll picks it up and opens the dialog while THIS request is still
+        # busy retracting the actuator off the sensor. After the home completes, the final
+        # "returned home / invalidated" message is set. Returns the standard disconnect
+        # result dict for the callers that reply synchronously (the manual jog/force move).
+        self._stop_axis(axis)
+        self._set(status="error", disconnect=True, sensor="loadcell", position=STATE.position_mm,
+                  message="Load cell disconnected. Stopping and returning the actuator home.")
+        self._home(axis)
+        self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
+                  message=final_message)
+        return {"ok": False, "position": HOME_MM, "disconnect": True,
+                "sensor": "loadcell", "message": final_message}
+
     def _read_force(self, futek, depth):
         # real load cell, or the coupled spring model in simulation.
         if futek is not None:
@@ -539,11 +557,9 @@ class RunEngine:
             if futek is not None and futek.lost():
                 # stop AND retract off the sensor (the Zaber is still connected, only the
                 # load cell dropped) - do not leave the rod pressed with no force guard.
-                self._stop_axis(axis)
-                self._home(axis)
-                msg = "Load cell disconnected during the move. Actuator stopped and returned home."
-                self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM, message=msg)
-                return {"ok": False, "position": HOME_MM, "disconnect": True, "sensor": "loadcell", "message": msg}
+                # The disconnect is surfaced before the home so the dialog pops at once.
+                return self._loadcell_lost_home(
+                    axis, "Load cell disconnected during the move. Actuator stopped and returned home.")
             force = abs(self._read_force(futek, max(0.0, STATE.position_mm - HOME_MM)))
             t = time.time() - t0
             trace.append([round(t, 4), round(force, 4)])
@@ -746,12 +762,10 @@ class RunEngine:
                 if futek is not None and futek.lost():
                     # Stop AND retract off the sensor. The Zaber is still connected (only
                     # the load cell dropped), so home it - leaving the rod pressed into the
-                    # sensor with no force feedback is the unsafe state.
-                    self._stop_axis(axis)
-                    self._home(axis)
-                    msg = "Load cell disconnected during the move. Actuator stopped and returned home."
-                    self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM, message=msg)
-                    return {"ok": False, "position": HOME_MM, "disconnect": True, "sensor": "loadcell", "message": msg}
+                    # sensor with no force feedback is the unsafe state. Surfaced before the
+                    # home so the dialog pops the instant the cell drops.
+                    return self._loadcell_lost_home(
+                        axis, "Load cell disconnected during the move. Actuator stopped and returned home.")
                 depth = max(0.0, STATE.position_mm - HOME_MM)
                 f = self._read_force(futek, depth)
                 # ABSOLUTE force vs the resting baseline (positive for either polarity),
@@ -1001,11 +1015,9 @@ class RunEngine:
         except FutekDisconnect:
             # the load cell dropped mid-press: the actuator link is still good, so home
             # it (safe) and invalidate this run. sensor="loadcell" picks the load-cell
-            # dialog, not the Zaber re-home one.
-            self._stop_axis(axis)
-            self._home(axis)
-            self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
-                      message="Load cell disconnected during the run. Run invalidated.")
+            # dialog, not the Zaber re-home one. Surfaced before the home so the dialog
+            # pops the instant the cell drops, not after the retract completes.
+            self._loadcell_lost_home(axis, "Load cell disconnected during the run. Run invalidated.")
         except Exception as exc:
             # any unexpected failure: stop and home the actuator so it is never
             # left moving or in an unknown state when the UI re-enables Start,
@@ -1127,9 +1139,7 @@ class RunEngine:
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
         except FutekDisconnect:
-            self._stop_axis(axis); self._home(axis)
-            self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
-                      message="Load cell disconnected during calibration. Run invalidated.")
+            self._loadcell_lost_home(axis, "Load cell disconnected during calibration. Run invalidated.")
         except Exception as exc:
             self._set(status="error", message=f"Fuji Film Test failed: {exc}")
         finally:
@@ -1464,10 +1474,8 @@ class RunEngine:
             self._zaber_disconnect_safe_state()
         except FutekDisconnect:
             # the load cell dropped out mid-run: stop the actuator, invalidate the run.
-            self._stop_axis(axis)
-            self._home(axis)
-            self._set(status="error", disconnect=True, sensor="loadcell", position=HOME_MM,
-                      message="Load cell disconnected during the fatigue test. Run invalidated.")
+            # Surfaced before the home so the dialog pops the instant the cell drops.
+            self._loadcell_lost_home(axis, "Load cell disconnected during the fatigue test. Run invalidated.")
         except Exception as exc:
             self._set(status="error", message=f"Fatigue test failed: {exc}")
         finally:
