@@ -53,29 +53,31 @@ def main():
     run_web_gui.set_desktop_window(window)
 
     def _on_closing():
-        # Closing the whole app while a test run is physically in progress would abandon
-        # the actuator mid-motion. Ask with pywebview's NATIVE confirmation dialog rather
-        # than the in-page one: while the OS is trying to close the window the in-page
-        # dialog is not reliably clickable (its OK button appears dead), and it is a
-        # dead-end anyway (dismissing it neither closes the app nor stops the test). The
-        # native dialog gives a real, working choice:
-        #   Cancel -> keep the app open, the test keeps running.
-        #   OK     -> stop the run safely (the run loop halts and returns the actuator to
-        #             home), WAIT for that to finish, then let the app close.
-        if not ENGINE.is_running():
+        # Closing the whole app while the actuator is physically moving would abandon it
+        # mid-motion. This covers BOTH threaded test runs (EM/Fatigue/Shear/Fuji, tracked
+        # by is_running) AND synchronous manual/calibration jogs and force moves (tracked
+        # by _move_loop_active, the flag set while a move loop owns the serial port). Ask
+        # with pywebview's NATIVE confirmation dialog rather than the in-page one: while
+        # the OS is trying to close the window the in-page dialog is not reliably clickable
+        # (its OK button appears dead) and is a dead-end anyway. The native dialog gives a
+        # real, working choice:
+        #   Cancel -> keep the app open, the motion continues.
+        #   OK     -> stop the motion safely (a run halts and returns the actuator home; a
+        #             jog halts in place), WAIT for it to finish, then let the app close.
+        if not (ENGINE.is_running() or STATE._move_loop_active):
             return True
         close_anyway = window.create_confirmation_dialog(
-            "Test in progress",
-            "A test is running. Closing will stop it and return the actuator to a safe "
-            "position. Close the app anyway?",
+            "Motion in progress",
+            "A test or move is in progress. Closing will stop the motion safely and close "
+            "the app. Close anyway?",
         )
         if not close_anyway:
             return False
-        STATE.stop()   # request a safe stop; the run loop halts and homes the actuator
-        # Hold the close until the run thread has actually finished homing, so the
-        # actuator is never left mid-motion when the process exits and the server stops.
+        STATE.stop()   # request a safe stop; the run/jog loop halts (and homes, for a run)
+        # Hold the close until the motion loop has actually finished, so the actuator is
+        # never left moving when the process exits and the server stops.
         deadline = time.time() + 30.0
-        while ENGINE.is_running() and time.time() < deadline:
+        while (ENGINE.is_running() or STATE._move_loop_active) and time.time() < deadline:
             time.sleep(0.1)
         return True
 
