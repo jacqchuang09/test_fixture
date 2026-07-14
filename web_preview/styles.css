@@ -696,6 +696,49 @@
         border-left-color: #c07f00;
       }
 
+      /* shear status row: the status pill (which shrinks) plus the target-band flag on
+         its right. The pill gives up width so the flag fits without wrapping. */
+      .shear-status-row {
+        display: flex;
+        gap: 10px;
+        align-items: stretch;
+        margin-bottom: 12px;
+      }
+      .shear-status-row .state-pill {
+        flex: 1 1 auto;
+        min-width: 0;
+        margin: 0;
+      }
+      /* Target-band flag beside the shear status pill: gray until the live load-cell
+         force sits inside the 1.4-1.6 N window, then green. It always occupies its space
+         (only the color changes), so triggering it never shifts the layout. */
+      .force-flag {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        min-width: 128px;
+        padding: 0 14px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: #eef1f5;
+        color: var(--muted);
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+      .force-flag.active {
+        border-color: var(--green);
+        background: #e7f6ec;
+        color: var(--green-dark);
+      }
+      .force-flag.active::before {
+        content: "\2713";   /* check mark once the force is in range */
+        font-weight: 800;
+      }
+
       .analysis-page {
         border: 1px solid var(--line);
         border-radius: 8px;

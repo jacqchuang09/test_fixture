@@ -62,7 +62,7 @@
         manualPosition = 17;
         manualPendingPosition = 17;
         manualStatusLines = [];
-        document.getElementById("manualDragPosition").value = 17;
+        document.getElementById("manualDragPosition").value = 0;
         document.getElementById("manualDragReadout").textContent = "selected position: 17.0 mm. travel from baseline: 0.0 mm.";
         // Idle / armed: only Start and the setup inputs are usable. Start is the
         // connection checkpoint and what turns on the live force readout (startManualTest);
@@ -246,7 +246,7 @@
         if (isForceMode) {
           document.getElementById("manualDragReadout").textContent = "drag position control disabled while force control is selected.";
         } else {
-          document.getElementById("manualDragReadout").textContent = `selected position: ${manualPendingPosition.toFixed(1)} mm. travel from baseline: ${(manualPendingPosition - 17).toFixed(1)} mm.`;
+          document.getElementById("manualDragReadout").textContent = `position: ${mmFromHome(manualPendingPosition).toFixed(1)} mm from home.`;
         }
         if (!locked) {
           setManualState("READY", isForceMode ? "force control selected. Compress drives down to the target force; Decompress drives up to it." : "distance control selected. move buttons use increment distance.");
@@ -261,7 +261,7 @@
       async function recordManualMove(distance, description) {
         const target = manualPosition + distance;
         if (target < ACTUATOR_MIN_MM || target > ACTUATOR_MAX_MM) {
-          setManualState("READY", `move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
+          setManualState("READY", `move blocked - position would reach ${mmFromHome(target).toFixed(2)} mm from home, outside travel 0-${mmFromHome(ACTUATOR_MAX_MM)} mm.`);
           return;
         }
         if (isManualMoving()) return;
@@ -312,11 +312,11 @@
           if (typeof status.position === "number") {
             manualPosition = status.position;
             manualPendingPosition = manualPosition;
-            document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
-            document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+            document.getElementById("manualDragPosition").value = mmFromHome(manualPosition).toFixed(2);
+            document.getElementById("manualDragReadout").textContent = `position: ${mmFromHome(manualPosition).toFixed(1)} mm from home.`;
           }
           const motion = status.simulated ? "simulated motion" : "actuator moving";
-          setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
+          setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${mmFromHome(manualPosition).toFixed(2)} mm from home.`);
         }, 100);
 
         const result = await moveApiWithTimeout({ distance, speed: manualActuatorSpeed() }, null);
@@ -327,8 +327,8 @@
         if (result && typeof result.position === "number") {
           manualPosition = result.position;
           manualPendingPosition = manualPosition;
-          document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
-          document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+          document.getElementById("manualDragPosition").value = mmFromHome(manualPosition).toFixed(2);
+          document.getElementById("manualDragReadout").textContent = `position: ${mmFromHome(manualPosition).toFixed(1)} mm from home.`;
         }
         setManualControlsLocked(false);
         document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
@@ -345,7 +345,7 @@
           return;
         }
         const sim = result.simulated ? " (simulated)" : "";
-        setManualState("READY", `move complete${sim}. position ${manualPosition.toFixed(2)} mm.`);
+        setManualState("READY", `move complete${sim}. position ${mmFromHome(manualPosition).toFixed(2)} mm from home.`);
       }
 
       // Force-feedback move: drive the actuator at the actuator speed until the load
@@ -393,11 +393,11 @@
           if (typeof status.position === "number") {
             manualPosition = status.position;
             manualPendingPosition = manualPosition;
-            document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
-            document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+            document.getElementById("manualDragPosition").value = mmFromHome(manualPosition).toFixed(2);
+            document.getElementById("manualDragReadout").textContent = `position: ${mmFromHome(manualPosition).toFixed(1)} mm from home.`;
           }
           const motion = status.simulated ? "simulated motion" : "actuator moving";
-          setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${manualPosition.toFixed(2)} mm.`);
+          setManualState("MOVING", `${description}. ${motion}: ${force.toFixed(2)} N at ${mmFromHome(manualPosition).toFixed(2)} mm from home.`);
         }, 100);
 
         // force search can take longer than a fixed jog, so allow more time than the
@@ -410,8 +410,8 @@
         if (result && typeof result.position === "number") {
           manualPosition = result.position;
           manualPendingPosition = manualPosition;
-          document.getElementById("manualDragPosition").value = manualPosition.toFixed(2);
-          document.getElementById("manualDragReadout").textContent = `position: ${manualPosition.toFixed(1)} mm. travel from baseline: ${(manualPosition - 17).toFixed(1)} mm.`;
+          document.getElementById("manualDragPosition").value = mmFromHome(manualPosition).toFixed(2);
+          document.getElementById("manualDragReadout").textContent = `position: ${mmFromHome(manualPosition).toFixed(1)} mm from home.`;
         }
         setManualControlsLocked(false);
         document.getElementById("manualAnalysisButton").disabled = manualData.length <= 1;
@@ -458,11 +458,11 @@
 
       function stageManualDragMove() {
         if (!manualStarted || manualControlMode() === "force" || isManualMoving()) return;
-        manualPendingPosition = Number(document.getElementById("manualDragPosition").value || 17);
+        manualPendingPosition = mmToAbs(Number(document.getElementById("manualDragPosition").value || 0));
         const delta = manualPendingPosition - manualPosition;
-        document.getElementById("manualDragReadout").textContent = `selected position: ${manualPendingPosition.toFixed(1)} mm. travel from baseline: ${(manualPendingPosition - 17).toFixed(1)} mm. pending move: ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} mm.`;
+        document.getElementById("manualDragReadout").textContent = `position: ${mmFromHome(manualPendingPosition).toFixed(1)} mm from home. pending move: ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} mm.`;
         document.getElementById("manualConfirmDragButton").disabled = Math.abs(delta) < 0.001;
-        setManualState("READY", `drag move staged to ${manualPendingPosition.toFixed(1)} mm. press Confirm Drag Move to apply.`);
+        setManualState("READY", `drag move staged to ${mmFromHome(manualPendingPosition).toFixed(1)} mm from home. press Confirm Drag Move to apply.`);
       }
 
       function confirmManualDragMove() {
@@ -479,7 +479,7 @@
         if (isManualMoving()) return;
         const homeDistance = 17 - manualPosition;
         if (Math.abs(homeDistance) < 0.001) {
-          setManualState("READY", "already at home position (17 mm).");
+          setManualState("READY", "already at home position (0 mm).");
           return;
         }
         // route home through the same streamed, force-monitored, locked move so it
@@ -635,7 +635,7 @@
         }
         const target = currentPosition + distance;
         if (target < ACTUATOR_MIN_MM || target > ACTUATOR_MAX_MM) {
-          addCalibrationUpdate(`ERROR: move blocked - position would reach ${target.toFixed(2)} mm, outside actuator travel ${ACTUATOR_MIN_MM}-${ACTUATOR_MAX_MM} mm.`);
+          addCalibrationUpdate(`ERROR: move blocked - position would reach ${mmFromHome(target).toFixed(2)} mm from home, outside travel 0-${mmFromHome(ACTUATOR_MAX_MM)} mm.`);
           return;
         }
         // Per-jog connection checkpoint (same gate the Fuji test and the manual-window
@@ -695,7 +695,7 @@
             setCalibrationControlsLocked(true, "WAITING TO START", "initializing load cell - please wait…", "discarded");
           } else {
             setCalibrationControlsLocked(true, "MOVING",
-              `actuator moving - ${Number(status.force || 0).toFixed(2)} N at ${Number(status.position || 0).toFixed(2)} mm`, "discarded");
+              `actuator moving - ${Number(status.force || 0).toFixed(2)} N at ${mmFromHome(Number(status.position || 0)).toFixed(2)} mm from home`, "discarded");
           }
         }, 100);
         let disconnected = false;
@@ -716,7 +716,7 @@
             addCalibrationUpdate(result.message || "Force limit reached. Move stopped for safety.");
           } else if (result && typeof result.position === "number") {
             setPositionReadout(result.position);
-            addCalibrationUpdate(`move complete. position ${result.position.toFixed(2)} mm.`);
+            addCalibrationUpdate(`move complete. position ${mmFromHome(result.position).toFixed(2)} mm from home.`);
           }
         } finally {
           // mark done BEFORE clearing the timer so any in-flight poll bails out, then

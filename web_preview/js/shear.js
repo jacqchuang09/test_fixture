@@ -37,6 +37,14 @@
         document.getElementById("secondsToDisplay").disabled = document.getElementById("cumulativeTime").checked;
       }
 
+      // Target-band flag beside the shear status pill: green while the live load-cell
+      // force is within 1.4-1.6 N (inclusive), gray otherwise.
+      function updateShearForceFlag(force) {
+        const el = document.getElementById("shearForceFlag");
+        if (!el) return;
+        el.classList.toggle("active", Number.isFinite(force) && force >= 1.4 && force <= 1.6);
+      }
+
       function resetShearGraph() {
         clearInterval(shearTimer);
         clearTimeout(shearAnalysisUnlockTimer);
@@ -48,6 +56,7 @@
         document.getElementById("shearStartButton").disabled = false;
         document.getElementById("shearPauseButton").disabled = true;
         document.getElementById("shearAnalysisButton").disabled = true;
+        updateShearForceFlag(0);   // back to gray when not live
         drawShearGraph();
         setShearState("READY", "click Start to begin live shear graph.");
       }
@@ -127,7 +136,9 @@
             drawShearGraph();
           }
           if (status.status === "running") {
-            setShearState("RUNNING", `live shear force: ${Number(status.force || 0).toFixed(3)} N.`);
+            const f = Number(status.force || 0);
+            setShearState("RUNNING", `live shear force: ${f.toFixed(3)} N.`);
+            updateShearForceFlag(f);
           } else if (status.status === "stopped" || status.status === "error") {
             clearInterval(shearTimer);
             shearTimer = null;
@@ -158,6 +169,7 @@
         document.getElementById("shearPauseButton").disabled = true;
         document.getElementById("shearAnalysisButton").disabled = latestShearAnalysisData.length === 0;
         document.getElementById("shearTestCloseButton").disabled = false;
+        updateShearForceFlag(0);   // live reading stopped - back to gray
         updateShearTimeControls();
         drawShearGraph();
         if (status.status === "error") {

@@ -567,7 +567,7 @@ class RunEngine:
             if force > FORCE_CEILING_N or (prev_force is not None and abs(force - prev_force) > spike_limit):
                 self._stop_axis(axis)
                 msg = (f"Force limit reached ({force:.1f} N). Manual move stopped for "
-                       f"safety at {STATE.position_mm:.2f} mm.")
+                       f"safety at {STATE.position_mm - HOME_MM:.2f} mm.")
                 self._set(status="error", safety_stop=True, position=STATE.position_mm, force=force, message=msg)
                 return {"ok": True, "position": STATE.position_mm, "force": force,
                         "stopped_for_safety": True, "simulated": simulated, "message": msg}
@@ -654,9 +654,9 @@ class RunEngine:
                     time.sleep(SAMPLE_DT)
             print(f"[calibration] manual_move COMPLETE pos={STATE.position_mm:.2f} mm  force={force:.2f} N - returning to UI")
             self._set(status="completed", position=STATE.position_mm, force=force, trace=list(trace),
-                      message=f"Manual move complete. Position {STATE.position_mm:.2f} mm.")
+                      message=f"Manual move complete. Position {STATE.position_mm - HOME_MM:.2f} mm from home.")
             return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,
-                    "message": f"Moved to {STATE.position_mm:.2f} mm."}
+                    "message": f"Moved to {STATE.position_mm - HOME_MM:.2f} mm from home."}
         except Exception as exc:
             self._stop_axis(axis)
             self._set(status="error", position=STATE.position_mm, message=f"Manual move failed: {exc}")
@@ -782,7 +782,7 @@ class RunEngine:
                         msg = "Force spike detected. Motion stopped for safety"
                     else:
                         msg = (f"Force limit reached ({force:.1f} N). Manual move stopped for safety "
-                               f"at {STATE.position_mm:.2f} mm.")
+                               f"at {STATE.position_mm - HOME_MM:.2f} mm.")
                     self._set(status="error", safety_stop=True, position=STATE.position_mm, force=force, message=msg)
                     return {"ok": True, "position": STATE.position_mm, "force": force,
                             "stopped_for_safety": True, "simulated": simulated, "message": msg}
@@ -812,7 +812,7 @@ class RunEngine:
                     break
                 time.sleep(SAMPLE_DT)
             verb = "Compressed" if going_down else "Decompressed"
-            msg = f"{verb} to {force:.2f} N at {STATE.position_mm:.2f} mm."
+            msg = f"{verb} to {force:.2f} N at {STATE.position_mm - HOME_MM:.2f} mm from home."
             print(f"[manual force] done - {msg}")
             self._set(status="completed", position=STATE.position_mm, force=force, trace=list(trace), message=msg)
             return {"ok": True, "position": STATE.position_mm, "force": force, "simulated": simulated,

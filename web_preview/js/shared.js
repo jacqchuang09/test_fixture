@@ -50,6 +50,11 @@
       const ACTUATOR_MIN_MM = 17;
       const ACTUATOR_MAX_MM = 41;
       const ACTUATOR_PEAK_THRUST_N = 25;
+      // The actuator's physical home sits at 17 mm in the device's own coordinates, but
+      // operators think in "distance from home" (home = 0 mm, extrude 10 mm reads 10 mm).
+      // Everything SHOWN to the operator uses these; motion math still uses the absolute value.
+      function mmFromHome(absPos) { return absPos - ACTUATOR_MIN_MM; }
+      function mmToAbs(fromHome) { return fromHome + ACTUATOR_MIN_MM; }
       let settingsVerified = false;
       let currentPosition = 17;
       let currentForce = 0;
@@ -236,7 +241,7 @@
         // the calibration window shows position in its status box, not a separate
         // readout, so the element may not exist - update it only if present.
         const el = document.getElementById("positionReadout");
-        if (el) el.textContent = `${value.toFixed(2)} mm`;
+        if (el) el.textContent = `${mmFromHome(value).toFixed(2)} mm`;
       }
 
       function setForceReadout(value) {

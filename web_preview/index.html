@@ -374,8 +374,8 @@
                     <span class="label-text">Drag Position Control (mm)</span>
                     <span class="sensor-help" tabindex="0" data-tooltip="Drag to choose a target position from 17 mm baseline to 41 mm max (the extrusion limit for this fixture). The actuator only moves after Confirm Drag Move is pressed.">i</span>
                   </span>
-                  <input id="manualDragPosition" type="range" min="17" max="41" step="0.01" value="17" oninput="stageManualDragMove()" />
-                  <div id="manualDragReadout" class="manual-drag-readout">selected position: 17.0 mm. travel from baseline: 0.0 mm.</div>
+                  <input id="manualDragPosition" type="range" min="0" max="24" step="0.01" value="0" oninput="stageManualDragMove()" />
+                  <div id="manualDragReadout" class="manual-drag-readout">position: 0.0 mm from home.</div>
                 </label>
                 <button id="manualConfirmDragButton" class="manual-confirm-button" onclick="confirmManualDragMove()" disabled>Confirm Drag Move</button>
               </div>
@@ -576,7 +576,10 @@
       </div>
       <div class="modal-body graph-shell">
         <div>
-          <div id="shearState" class="state-pill"><span class="state-tag">READY:</span><span class="state-message">click Start to begin live shear graph.</span></div>
+          <div class="shear-status-row">
+            <div id="shearState" class="state-pill"><span class="state-tag">READY:</span><span class="state-message">click Start to begin live shear graph.</span></div>
+            <div id="shearForceFlag" class="force-flag" title="Turns green while the live shear force is within 1.4-1.6 N">1.4-1.6 N</div>
+          </div>
           <div id="shearMessage" class="main-message ok"></div>
         </div>
         <div class="graph-wrap">
