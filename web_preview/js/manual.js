@@ -63,7 +63,7 @@
         manualPendingPosition = 17;
         manualStatusLines = [];
         document.getElementById("manualDragPosition").value = 0;
-        document.getElementById("manualDragReadout").textContent = "selected position: 17.0 mm. travel from baseline: 0.0 mm.";
+        document.getElementById("manualDragReadout").textContent = "position: 0.0 mm from home.";
         // Idle / armed: only Start and the setup inputs are usable. Start is the
         // connection checkpoint and what turns on the live force readout (startManualTest);
         // nothing samples, moves, or records until then, so the graph opens empty.

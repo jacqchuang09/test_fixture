@@ -166,7 +166,7 @@ class HardwareState:
             self._read_position()
             return {
                 "ok": True, "connected": True, "comport": comport,
-                "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm:.2f} mm.",
+                "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm - HOME_MM:.2f} mm from home.",
             }
 
         self.cli = None
@@ -246,13 +246,13 @@ class HardwareState:
                 axis.move_relative(distance, _mm_unit(), wait_until_idle=True)
                 self._read_position()
                 return {"ok": True, "position": self.position_mm,
-                        "message": f"Moved Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."}
+                        "message": f"Moved Zaber axis by {distance:g} mm. Current position: {self.position_mm - HOME_MM:.2f} mm from home."}
             except Exception as exc:
                 return {"ok": False, "position": self.position_mm,
                         "message": f"Zaber move failed: {exc}"}
         self.position_mm += distance
         return {"ok": True, "position": self.position_mm,
-                "message": f"[sim] Moved simulated Zaber axis by {distance:g} mm. Current position: {self.position_mm:.2f} mm."}
+                "message": f"[sim] Moved simulated Zaber axis by {distance:g} mm. Current position: {self.position_mm - HOME_MM:.2f} mm from home."}
 
     def home(self, comport):
         # Move to the working baseline (17 mm) - the retracted position, AWAY from
@@ -268,18 +268,18 @@ class HardwareState:
                 self._read_position()
                 if abs(self.position_mm - HOME_MM) < 0.05:
                     return {"ok": True, "position": self.position_mm,
-                            "message": f"Already at baseline ({self.position_mm:.2f} mm)."}
+                            "message": f"Already at baseline ({self.position_mm - HOME_MM:.2f} mm from home)."}
                 axis.move_absolute(HOME_MM, _mm_unit(), wait_until_idle=True)
                 self._read_position()
                 return {"ok": True, "position": self.position_mm,
-                        "message": f"Moved to baseline. Current position: {self.position_mm:.2f} mm."}
+                        "message": f"Moved to baseline. Current position: {self.position_mm - HOME_MM:.2f} mm from home."}
             except Exception as exc:
                 # an interrupted/failed move leaves the actuator somewhere unknown;
                 # re-read the device's ACTUAL position so the GUI does not keep a
                 # stale value (a stale value is what breaks the travel limits).
                 self._read_position()
                 return {"ok": False, "position": self.position_mm,
-                        "message": f"Zaber home failed: {exc}. Re-synced position to {self.position_mm:.2f} mm."}
+                        "message": f"Zaber home failed: {exc}. Re-synced position to {self.position_mm - HOME_MM:.2f} mm from home."}
         self.position_mm = HOME_MM
         return {"ok": True, "position": self.position_mm,
                 "message": f"[sim] Moved simulated Zaber axis to home/default position: {HOME_MM:g} mm."}
@@ -302,7 +302,7 @@ class HardwareState:
             axis.generic_command(f"set pos {int(round(native))}")
             self._read_position()
             return {"ok": True, "position": self.position_mm,
-                    "message": f"Baseline set: the actuator's current position is now {self.position_mm:.2f} mm."}
+                    "message": f"Baseline set: the actuator's current position is now {self.position_mm - HOME_MM:.2f} mm from home."}
         except Exception as exc:
             return {"ok": False, "position": self.position_mm,
                     "message": f"Could not set baseline reference: {exc}"}
