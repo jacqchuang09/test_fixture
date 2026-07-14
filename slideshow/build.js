@@ -55,7 +55,7 @@ function codeBlock(s, lines, x, y, w, fs) {
 // =================================================== 1. TITLE
 (() => {
   const s = pres.addSlide(); s.background = { color: DARK };
-  s.addText("PROGRESS UPDATE  ·  JUNE 2026", { x: M, y: 2.0, w: CW, h: 0.35, margin: 0, fontFace: F, fontSize: 13, bold: true, color: ACCENT, charSpacing: 3 });
+  s.addText("PROGRESS UPDATE  ·  JUNE-JULY 2026", { x: M, y: 2.0, w: CW, h: 0.35, margin: 0, fontFace: F, fontSize: 13, bold: true, color: ACCENT, charSpacing: 3 });
   s.addText("Test Fixture GUI", { x: M, y: 2.45, w: CW, h: 1.2, margin: 0, fontFace: F, fontSize: 60, bold: true, color: WHITE });
   s.addText("Bench control software for the sensor-team test fixture", { x: M, y: 3.7, w: CW, h: 0.5, margin: 0, fontFace: F, fontSize: 21, color: LIGHT });
   s.addText("EM      ·      Calibration      ·      Manual      ·      Shear      ·      Fatigue", { x: M, y: 6.35, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 13, bold: true, color: "7E8B94", charSpacing: 1 });
@@ -118,7 +118,7 @@ function codeBlock(s, lines, x, y, w, fs) {
   const stats = [
     ["5", "test workflows", "EM, Calibration, Manual,\nShear, and Fatigue"],
     ["6", "safety systems", "Force, spike, travel, disconnect,\nsnap-to, single-owner reader"],
-    ["100+", "user stories", "Across 11 features, with a\nformal test plan underway"],
+    ["100+", "user stories", "Across 11 features; test\ncases done for 7 of 11"],
   ];
   const gap = 0.4, cw = (CW - gap * 2) / 3, cy = 2.05, ch = 2.5;
   stats.forEach(([big, label, sub], i) => {
@@ -180,8 +180,8 @@ divider("Part 1", "What I built");
     s.addText(d, { x: tx + 0.32, y: yy + 0.3, w: tw - 0.32, h: 0.6, margin: 0, fontFace: F, fontSize: 12.5, color: MUTE, lineSpacingMultiple: 1.05 });
     yy += 1.12;
   });
-  // image (1500x994 -> ratio 1.509)
-  const iw = 7.1, ih = iw / 1.509, ix = M + tw + 0.5, iy = 1.95;
+  // image (2360x1580 -> ratio 1.494)
+  const iw = 7.1, ih = iw / 1.494, ix = M + tw + 0.5, iy = 1.95;
   framedImage(s, "shot_fatigue.png", ix, iy, iw, ih);
 })();
 
@@ -250,8 +250,8 @@ divider("Part 1", "What I built");
     s.addText(d, { x: tx + 0.32, y: yy + 0.3, w: tw - 0.32, h: 0.65, margin: 0, fontFace: F, fontSize: 12.5, color: MUTE, lineSpacingMultiple: 1.05 });
     yy += 1.12;
   });
-  // image (1500x793 -> ratio 1.892)
-  const iw = 7.1, ih = iw / 1.892, ix = M + tw + 0.5, iy = 2.55;
+  // image (2360x1264 -> ratio 1.867)
+  const iw = 7.1, ih = iw / 1.867, ix = M + tw + 0.5, iy = 2.55;
   framedImage(s, "shot_em.png", ix, iy, iw, ih);
 })();
 
@@ -283,7 +283,7 @@ divider("Part 1", "What I built");
     ["Force ceiling", "A hard over-force limit stops the actuator before the load cell can be overloaded."],
     ["Spike detection", "A sudden force jump - metal-on-metal contact - halts motion immediately."],
     ["Travel limits", "The stage never drives into its mechanical end stop."],
-    ["Disconnect handling", "Losing the actuator or load cell mid-test stops safely and invalidates the run."],
+    ["Disconnect handling", "Losing the actuator or load cell mid-test stops, retracts to home, and invalidates the run."],
     ["Snap-to input limits", "Out-of-range entries snap to the nearest limit and say which limit they hit."],
     ["Single-owner load cell", "Exactly one reader touches the device, so it can't be corrupted mid-session."],
   ];
@@ -294,6 +294,28 @@ divider("Part 1", "What I built");
     s.addText(h, { x: x + 0.28, y: y + 0.24, w: cw - 0.56, h: 0.4, margin: 0, fontFace: F, fontSize: 15.5, bold: true, color: ACCENT });
     s.addText(d, { x: x + 0.28, y: y + 0.66, w: cw - 0.56, h: 1.0, margin: 0, fontFace: F, fontSize: 12, color: MUTE, lineSpacingMultiple: 1.08 });
   });
+})();
+
+// =================================================== 13a. DISCONNECT RESILIENCE
+(() => {
+  const s = pres.addSlide(); s.background = { color: WHITE };
+  header(s, "Resilience", "Surviving a disconnect");
+  const items = [
+    ["Stop and retract home", "Any actuator or load-cell drop halts motion and backs the rod off the sensor, never leaving it pressed."],
+    ["Load cell self-recovers", "The reader re-initializes the device in place, so a reconnected cell reads again with no app restart."],
+    ["Never fakes the force", "On a real rig a missing load cell blocks the run instead of quietly recording simulated data."],
+    ["Fast, honest detection", "A stalled reader is caught in a fraction of a second, so the run aborts and the actuator stops promptly."],
+    ["Right message per sensor", "A load-cell drop and a Zaber drop show different reconnect guidance, not one generic error."],
+    ["Live COM port list", "A cable plugged in after the app opens shows up in the port picker on its own."],
+  ];
+  const gx = 0.4, gy = 0.32, cw = (CW - gx * 2) / 3, ch = 1.75, top = 2.0;
+  items.forEach(([h, d], i) => {
+    const col = i % 3, row = Math.floor(i / 3), x = M + col * (cw + gx), y = top + row * (ch + gy);
+    card(s, x, y, cw, ch, CARD);
+    s.addText(h, { x: x + 0.28, y: y + 0.24, w: cw - 0.56, h: 0.4, margin: 0, fontFace: F, fontSize: 15.5, bold: true, color: ACCENT });
+    s.addText(d, { x: x + 0.28, y: y + 0.66, w: cw - 0.56, h: 1.0, margin: 0, fontFace: F, fontSize: 12, color: MUTE, lineSpacingMultiple: 1.08 });
+  });
+  s.addText("The load-cell recovery behavior is verified in simulation and by code review; the real-device reopen still needs a bench test on the Windows rig.", { x: M, y: 6.35, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 11.5, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
 })();
 
 // =================================================== 10b. LIMITS
@@ -308,7 +330,7 @@ divider("Part 1", "What I built");
       ["Increment distance", "0.1 to 12 mm"],
       ["Actuator speed", "0.01 to 2 mm/s"],
       ["Fatigue force bounds", "up to 32 N, upper > lower"],
-      ["Fatigue frequency", "1 to 5 Hz"],
+      ["Fatigue frequency", "0.1-5 Hz (square 0.1-1)"],
       ["EM runs per test", "1 to 10"],
     ] },
     { x: M + colW + gap, title: "Fixed physical and safety limits", rows: [
@@ -377,6 +399,115 @@ divider("Part 2", "Under the hood");
     s.addText(d, { x: x + 0.32, y: cy + 1.6, w: cw - 0.64, h: 1.8, margin: 0, fontFace: F, fontSize: 13, color: MUTE, lineSpacingMultiple: 1.15 });
   });
 })();
+
+// =================================================== 13. TIMELINE
+(() => {
+  const s = pres.addSlide(); s.background = { color: WHITE };
+  header(s, "Timeline", "Day by day");
+  s.addText("Days 1-18 went to clinical data validation (OHSU / HFH cases, the MATLAB pipeline, and site decks). The fixture GUI begins on Day 19.", { x: M, y: 1.72, w: CW, h: 0.5, margin: 0, fontFace: F, fontSize: 13, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
+  const rows = [
+    ["Day 19  ·  Jun 10", "Annotated the test engine (run_engine) end to end - one code path for simulation and real hardware"],
+    ["Day 20  ·  Jun 11", "Reliable motion + serial - killed the 12 s move lag, stopped false disconnects, fixed the 17 mm reference"],
+    ["Day 21  ·  Jun 12", "Safety UI state - the waiting pill, control locking, safety-stop homes; redid the calibration window"],
+    ["Day 22  ·  Jun 15", "Run management + reporting - made the report numbers match the graphs; the redo-run workflow"],
+    ["Day 23  ·  Jun 16", "Other track - UCI data-parsing script and website planning (no GUI)"],
+    ["Day 24  ·  Jun 17", "Real-hardware behavior - true home each test, Shear wired to the load cell, manual force-feedback"],
+    ["Day 25  ·  Jun 18", "Load-cell reliability - the single-owner reader, plus fatigue and EM safety fixes"],
+    ["Day 26  ·  Jun 19", "Other track - competitor research and a clinical-affairs interview (no GUI)"],
+    ["Day 27  ·  Jun 22", "Snap-to input limits, the limits and bounds reference, and user-story reconciliation"],
+    ["Day 28  ·  Jun 23", "Formal test plan done - 45 EM test cases across functional, negative, interruption, boundary, and journey paths"],
+    ["Day 29-30  ·  Jun 24-25", "Connection gating and deferred EM run files, square-wave characterization, shear CAP-file prompt, travel limit to 41 mm"],
+    ["Day 33-36  ·  Jun 30-Jul 3", "Interactive live graphs and Manual Start button; disconnect recovery, retract-to-home, and load-cell reopen; waveform-dependent fatigue frequency; live COM port list"],
+  ];
+  const top = 2.3, rh = 0.44, dotD = 0.2, dotX = M + 0.06;
+  s.addShape(pres.shapes.LINE, { x: dotX + dotD / 2, y: top + dotD / 2, w: 0, h: (rows.length - 1) * rh, line: { color: "DDE3E8", width: 1.5 } });
+  rows.forEach(([label, text], i) => {
+    const isOther = text.indexOf("Other track") === 0;
+    const y = top + i * rh;
+    s.addShape(pres.shapes.OVAL, { x: dotX, y, w: dotD, h: dotD, fill: { color: isOther ? "B6BFC6" : ACCENT }, line: { color: WHITE, width: 2 } });
+    s.addText(label, { x: M + 0.5, y: y - 0.07, w: 2.5, h: 0.4, margin: 0, fontFace: F, fontSize: 13, bold: true, color: isOther ? MUTE : INK });
+    s.addText(text, { x: M + 3.2, y: y - 0.07, w: CW - 3.2, h: 0.45, margin: 0, fontFace: F, fontSize: 12.5, color: MUTE });
+  });
+})();
+
+// =================================================== 13b. DOCUMENTATION WORKBOOK
+(() => {
+  const s = pres.addSlide(); s.background = { color: WHITE };
+  header(s, "Documentation", "It's all tracked in one workbook");
+  s.addText("Every requirement, change, and check lives in a single documentation workbook, so nothing is only in someone's head.", { x: M, y: 1.74, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 13.5, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
+  docTable(s, ["Section", "What it documents", "Size"], [
+    ["Verification checklist", "Per-area pass/fail checks: when it happens, pass condition, status, verified", "84 checks"],
+    ["GUI Updates Log", "Every visual, backend, hardware, and documentation change, with files touched and test status", "60+ entries"],
+    ["User Story Tracker", "Feature requirements with priority, status, and acceptance criteria", "100+ stories"],
+    ["Limits and bounds", "Every input range and fixed physical / safety limit, per test", "reference"],
+    ["Testing info + folder workflow", "Test setup notes and the analysis save workflow", "reference"],
+  ], M, 2.35, CW, [3.4, CW - 5.4, 2.0]);
+  s.addText("Across 14 sheets. The checklist drives the formal test pass; the updates log is the change history.", { x: M, y: 5.9, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 11.5, italic: true, color: MUTE });
+})();
+
+// =================================================== 13e. DOCUMENTATION FOLDER
+(() => {
+  const s = pres.addSlide(); s.background = { color: WHITE };
+  header(s, "Documentation", "The documentation folder");
+  s.addText("Beyond the tracking workbook, the reader-facing docs are organized into six guides - each written for a specific reader.", { x: M, y: 1.74, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 13.5, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
+  docTable(s, ["Document", "What's inside"], [
+    ["1 · Project overview", "What the GUI is, the goals it serves, and the scope of each test workflow"],
+    ["2 · Operator guide", "Step by step: how to set up, run, and analyze each test at the bench"],
+    ["3 · Technical reference", "Every limit, bound, safety stop, and force formula, per test"],
+    ["4 · Developer guide", "Architecture, code layout, and how to build and extend the app"],
+    ["5 · Test plan and verification", "Formal test cases plus the pass/fail verification checklist"],
+    ["6 · Design concepts and proposals", "Mockups, future-feature proposals, and the design decisions behind them"],
+  ], M, 2.3, CW, [4.0, CW - 4.0]);
+  s.addText("Formal test cases done for 7 of 11 features - 4 to go.", { x: M, y: 5.95, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 12.5, bold: true, italic: true, color: ACCENT });
+})();
+
+// =================================================== 14. STANDS + NEXT
+(() => {
+  const s = pres.addSlide(); s.background = { color: WHITE };
+  header(s, "Status", "Where it stands & what's next");
+  const colW = (CW - 0.6) / 2;
+  // left: solid now
+  s.addText("Solid now", { x: M, y: 1.9, w: colW, h: 0.4, margin: 0, fontFace: F, fontSize: 18, bold: true, color: GREEN });
+  s.addText([
+    { text: "Every test type runs end to end", options: { bullet: true, breakLine: true } },
+    { text: "Safety behaviors verified in simulation", options: { bullet: true, breakLine: true } },
+    { text: "Verified on the rig where hardware was available", options: { bullet: true, breakLine: true } },
+    { text: "Documentation organized into 6 guides", options: { bullet: true, breakLine: true } },
+    { text: "Packaged and runnable without a terminal", options: { bullet: true } },
+  ], { x: M, y: 2.45, w: colW, h: 2.8, margin: 0, valign: "top", fontFace: F, fontSize: 15, color: INK, paraSpaceAfter: 12, lineSpacingMultiple: 1.05 });
+  // right: next
+  const rx = M + colW + 0.6;
+  s.addText("Next", { x: rx, y: 1.9, w: colW, h: 0.4, margin: 0, fontFace: F, fontSize: 18, bold: true, color: ACCENT });
+  s.addText([
+    { text: "Finish the formal test cases - 7 of 11 features done, 4 to go", options: { bullet: true, breakLine: true } },
+    { text: "Confirm safety-critical cases on the real rig", options: { bullet: true, breakLine: true } },
+    { text: "Reconcile the user-stories doc to the current GUI", options: { bullet: true } },
+  ], { x: rx, y: 2.45, w: colW, h: 2.8, margin: 0, valign: "top", fontFace: F, fontSize: 15, color: INK, paraSpaceAfter: 12, lineSpacingMultiple: 1.05 });
+})();
+
+// =================================================== RESOURCES (dark closing)
+(() => {
+  const s = pres.addSlide(); s.background = { color: DARK };
+  s.addText("RESOURCES", { x: M, y: 0.85, w: CW, h: 0.35, margin: 0, fontFace: F, fontSize: 13, bold: true, color: ACCENT, charSpacing: 3 });
+  s.addText("Documentation & code", { x: M, y: 1.2, w: CW, h: 0.9, margin: 0, fontFace: F, fontSize: 33, bold: true, color: WHITE });
+  const items = [
+    ["User stories", "11 features, 100+ stories - every happy and unhappy path, safety handling, and a verification method for each.", "[ add link ]"],
+    ["Test plan", "Formal test cases traced to each story, organized by technique and tagged simulation vs real rig.", "[ add link ]"],
+    ["Source code", "The full GUI, test engine, and hardware drivers, version-controlled.", "github.com/jacqchuang09/test_fixture"],
+  ];
+  const gap = 0.45, cw = (CW - gap * 2) / 3, cy = 2.5, ch = 3.15;
+  items.forEach(([h, d, l], i) => {
+    const x = M + i * (cw + gap);
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: cy, w: cw, h: ch, rectRadius: 0.06, fill: { color: DARKCARD }, line: { type: "none" } });
+    s.addText(h, { x: x + 0.35, y: cy + 0.35, w: cw - 0.7, h: 0.5, margin: 0, fontFace: F, fontSize: 19, bold: true, color: WHITE });
+    s.addText(d, { x: x + 0.35, y: cy + 0.95, w: cw - 0.7, h: 1.55, margin: 0, fontFace: F, fontSize: 13, color: LIGHT, lineSpacingMultiple: 1.15 });
+    s.addText(l, { x: x + 0.35, y: cy + ch - 0.62, w: cw - 0.7, h: 0.4, margin: 0, fontFace: F, fontSize: 11.5, bold: true, color: ACCENT });
+  });
+  s.addText("Thank you  ·  Jacqueline Chuang", { x: M, y: 6.85, w: CW, h: 0.35, margin: 0, fontFace: F, fontSize: 12.5, color: "7E8B94" });
+})();
+
+// =================================================== APPENDIX DIVIDER
+divider("Appendix", "Deep dives & backup");
 
 // =================================================== 13b. ANTICIPATED Q: LIVE-GRAPH LAG
 (() => {
@@ -499,91 +630,30 @@ divider("Part 2", "Under the hood");
   s.addText("limit = block stiffness (N/mm) x max actuator speed (mm/s). The 60 N/s is a placeholder until the block stiffness is measured on the rig.", { x: M, y: 6.95, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 11, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
 })();
 
-// =================================================== 13. TIMELINE
+// =================================================== DOC 5: SQUARE-WAVE CHARACTERIZATION
 (() => {
   const s = pres.addSlide(); s.background = { color: WHITE };
-  header(s, "Timeline", "Day by day");
-  s.addText("Days 1-18 went to clinical data validation (OHSU / HFH cases, the MATLAB pipeline, and site decks). The fixture GUI begins on Day 19.", { x: M, y: 1.72, w: CW, h: 0.5, margin: 0, fontFace: F, fontSize: 13, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
+  header(s, "Documentation", "Fatigue square-wave frequency limit");
+  const AMBER = "B0560F", RED = "C5423C";
+  s.addText("A rig frequency sweep (tools/zaber_square_wave_characterization.py) measures where a square wave stops holding its flats. Flat-hold - the fraction of each half-cycle held at the commanded level - is the decider: a true square holds most of it, a triangle almost none.", { x: M, y: 1.72, w: CW, h: 0.6, margin: 0, fontFace: F, fontSize: 12.5, italic: true, color: MUTE, lineSpacingMultiple: 1.1 });
+  const head = ["Frequency", "Flat-hold", "Reaches bounds", "Shape"].map((h) => ({ text: h, options: { fill: { color: ACCENT }, color: "FFFFFF", bold: true, align: "left" } }));
   const rows = [
-    ["Day 19  ·  Jun 10", "Annotated the test engine (run_engine) end to end - one code path for simulation and real hardware"],
-    ["Day 20  ·  Jun 11", "Reliable motion + serial - killed the 12 s move lag, stopped false disconnects, fixed the 17 mm reference"],
-    ["Day 21  ·  Jun 12", "Safety UI state - the waiting pill, control locking, safety-stop homes; redid the calibration window"],
-    ["Day 22  ·  Jun 15", "Run management + reporting - made the report numbers match the graphs; the redo-run workflow"],
-    ["Day 23  ·  Jun 16", "Other track - UCI data-parsing script and website planning (no GUI)"],
-    ["Day 24  ·  Jun 17", "Real-hardware behavior - true home each test, Shear wired to the load cell, manual force-feedback"],
-    ["Day 25  ·  Jun 18", "Load-cell reliability - the single-owner reader, plus fatigue and EM safety fixes"],
-    ["Day 26  ·  Jun 19", "Other track - competitor research and a clinical-affairs interview (no GUI)"],
-    ["Day 27  ·  Jun 22", "Snap-to input limits, the limits and bounds reference, and user-story reconciliation"],
-    ["Day 28  ·  Jun 23", "Formal test plan done - 45 EM test cases across functional, negative, interruption, boundary, and journey paths"],
+    ["≤ 0.25 Hz", "50-81%", "yes (100%)", "square - holds a flat", GREEN],
+    ["0.3-0.45 Hz", "13-42%", "yes (100%)", "rounding into a triangle", AMBER],
+    ["0.5 Hz", "~1%", "barely (98%)", "triangle - no flat", AMBER],
+    ["≥ 0.75 Hz", "0%", "no (60-46%)", "cannot reach amplitude", RED],
   ];
-  const top = 2.35, rh = 0.53, dotD = 0.2, dotX = M + 0.06;
-  s.addShape(pres.shapes.LINE, { x: dotX + dotD / 2, y: top + dotD / 2, w: 0, h: (rows.length - 1) * rh, line: { color: "DDE3E8", width: 1.5 } });
-  rows.forEach(([label, text], i) => {
-    const isOther = text.indexOf("Other track") === 0;
-    const y = top + i * rh;
-    s.addShape(pres.shapes.OVAL, { x: dotX, y, w: dotD, h: dotD, fill: { color: isOther ? "B6BFC6" : ACCENT }, line: { color: WHITE, width: 2 } });
-    s.addText(label, { x: M + 0.5, y: y - 0.07, w: 2.5, h: 0.4, margin: 0, fontFace: F, fontSize: 13, bold: true, color: isOther ? MUTE : INK });
-    s.addText(text, { x: M + 3.2, y: y - 0.07, w: CW - 3.2, h: 0.45, margin: 0, fontFace: F, fontSize: 12.5, color: MUTE });
+  const body = rows.map((r) => r.slice(0, 4).map((cell, i) => ({ text: cell, options: { color: r[4], bold: i === 0, align: "left" } })));
+  s.addTable([head, ...body], {
+    x: M, y: 2.5, w: CW, colW: [2.3, 1.9, 2.5, CW - 6.7], rowH: 0.5,
+    border: { type: "solid", pt: 0.5, color: "E3E7EB" },
+    fontFace: F, fontSize: 13, valign: "middle", align: "left", margin: [3, 8, 3, 8], fill: { color: "FFFFFF" },
   });
-})();
-
-// =================================================== 13b. DOCUMENTATION WORKBOOK
-(() => {
-  const s = pres.addSlide(); s.background = { color: WHITE };
-  header(s, "Documentation", "It's all tracked in one workbook");
-  s.addText("Every requirement, change, and check lives in a single documentation workbook, so nothing is only in someone's head.", { x: M, y: 1.74, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 13.5, italic: true, color: MUTE, lineSpacingMultiple: 1.05 });
-  docTable(s, ["Section", "What it documents", "Size"], [
-    ["Verification checklist", "Per-area pass/fail checks: when it happens, pass condition, status, verified", "84 checks"],
-    ["GUI Updates Log", "Every visual, backend, hardware, and documentation change, with files touched and test status", "60+ entries"],
-    ["User Story Tracker", "Feature requirements with priority, status, and acceptance criteria", "100+ stories"],
-    ["Limits and bounds", "Every input range and fixed physical / safety limit, per test", "reference"],
-    ["Testing info + folder workflow", "Test setup notes and the analysis save workflow", "reference"],
-  ], M, 2.35, CW, [3.4, CW - 5.4, 2.0]);
-  s.addText("Across 14 sheets. The checklist drives the formal test pass; the updates log is the change history.", { x: M, y: 5.9, w: CW, h: 0.4, margin: 0, fontFace: F, fontSize: 11.5, italic: true, color: MUTE });
-})();
-
-// =================================================== 14. STANDS + NEXT
-(() => {
-  const s = pres.addSlide(); s.background = { color: WHITE };
-  header(s, "Status", "Where it stands & what's next");
-  const colW = (CW - 0.6) / 2;
-  // left: solid now
-  s.addText("Solid now", { x: M, y: 1.9, w: colW, h: 0.4, margin: 0, fontFace: F, fontSize: 18, bold: true, color: GREEN });
+  card(s, M, 5.45, CW, 1.25, TINTB);
   s.addText([
-    { text: "Every test type runs end to end", options: { bullet: true, breakLine: true } },
-    { text: "Safety behaviors verified in simulation", options: { bullet: true, breakLine: true } },
-    { text: "Verified on the rig where hardware was available", options: { bullet: true, breakLine: true } },
-    { text: "Packaged and runnable without a terminal", options: { bullet: true } },
-  ], { x: M, y: 2.45, w: colW, h: 2.8, margin: 0, valign: "top", fontFace: F, fontSize: 15, color: INK, paraSpaceAfter: 12, lineSpacingMultiple: 1.05 });
-  // right: next
-  const rx = M + colW + 0.6;
-  s.addText("Next", { x: rx, y: 1.9, w: colW, h: 0.4, margin: 0, fontFace: F, fontSize: 18, bold: true, color: ACCENT });
-  s.addText([
-    { text: "Execute the formal test plan (full path coverage)", options: { bullet: true, breakLine: true } },
-    { text: "Confirm safety-critical cases on the real rig", options: { bullet: true, breakLine: true } },
-    { text: "Reconcile the user-stories doc to the current GUI", options: { bullet: true } },
-  ], { x: rx, y: 2.45, w: colW, h: 2.8, margin: 0, valign: "top", fontFace: F, fontSize: 15, color: INK, paraSpaceAfter: 12, lineSpacingMultiple: 1.05 });
-})();
-
-// =================================================== RESOURCES (dark closing)
-(() => {
-  const s = pres.addSlide(); s.background = { color: DARK };
-  s.addText("RESOURCES", { x: M, y: 0.85, w: CW, h: 0.35, margin: 0, fontFace: F, fontSize: 13, bold: true, color: ACCENT, charSpacing: 3 });
-  s.addText("Documentation & code", { x: M, y: 1.2, w: CW, h: 0.9, margin: 0, fontFace: F, fontSize: 33, bold: true, color: WHITE });
-  const items = [
-    ["User stories", "11 features, 100+ stories - every happy and unhappy path, safety handling, and a verification method for each.", "[ add link ]"],
-    ["Test plan", "Formal test cases traced to each story, organized by technique and tagged simulation vs real rig.", "[ add link ]"],
-    ["Source code", "The full GUI, test engine, and hardware drivers, version-controlled.", "github.com/jacqchuang09/test_fixture"],
-  ];
-  const gap = 0.45, cw = (CW - gap * 2) / 3, cy = 2.5, ch = 3.15;
-  items.forEach(([h, d, l], i) => {
-    const x = M + i * (cw + gap);
-    s.addShape(pres.shapes.ROUNDED_RECTANGLE, { x, y: cy, w: cw, h: ch, rectRadius: 0.06, fill: { color: DARKCARD }, line: { type: "none" } });
-    s.addText(h, { x: x + 0.35, y: cy + 0.35, w: cw - 0.7, h: 0.5, margin: 0, fontFace: F, fontSize: 19, bold: true, color: WHITE });
-    s.addText(d, { x: x + 0.35, y: cy + 0.95, w: cw - 0.7, h: 1.55, margin: 0, fontFace: F, fontSize: 13, color: LIGHT, lineSpacingMultiple: 1.15 });
-    s.addText(l, { x: x + 0.35, y: cy + ch - 0.62, w: cw - 0.7, h: 0.4, margin: 0, fontFace: F, fontSize: 11.5, bold: true, color: ACCENT });
-  });
-  s.addText("Thank you  ·  Jacqueline Chuang", { x: M, y: 6.85, w: CW, h: 0.35, margin: 0, fontFace: F, fontSize: 12.5, color: "7E8B94" });
+    { text: "Faithful square: keep it at or below 0.25 Hz.  ", options: { bold: true, color: ACCENT } },
+    { text: "The frequency field allows a square up to 1 Hz, but above ~0.25 Hz the wave rounds into a triangle and above ~0.5 Hz it no longer reaches its bounds. The rod slews a 2 mm swing in about 1 s and lags the command ~165 ms - so the measured limit lands far below the naive speed-only ceiling of a few hertz (which wrongly assumes the rod reaches full speed instantly).", options: { color: INK } },
+  ], { x: M + 0.32, y: 5.58, w: CW - 0.64, h: 1.0, margin: 0, fontFace: F, fontSize: 12, valign: "middle", lineSpacingMultiple: 1.12 });
 })();
 
 pres.writeFile({ fileName: "Test_Fixture_GUI_Update.pptx" }).then(f => console.log("wrote", f));

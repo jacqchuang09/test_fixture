@@ -30,15 +30,11 @@ const URL = "http://127.0.0.1:8765/index.html";
   await shotEl("#manualTestModal", "shot_manual.png");
   await page.evaluate(() => { const m = document.getElementById("manualTestModal"); if (m && m.open) m.close(); });
 
-  // 3. Fatigue Testing Window (waveform preview) - show the blood-pressure pulse,
-  // the standout of the expanded waveform set.
+  // 3. Fatigue Testing Window (waveform preview) - capture the default Sine state
+  // (the window's dropdown offers Sine and Square). 1 Hz / 28,800 cycles keeps the
+  // "~8 hours" estimate the slide references.
   await page.evaluate(() => { if (window.openCyclicalTest) openCyclicalTest(); });
-  await new Promise(r => setTimeout(r, 600));
-  await page.evaluate(() => {
-    const s = document.getElementById("waveformType");
-    if (s) { s.value = "Blood Pressure"; s.dispatchEvent(new Event("input")); }
-  });
-  await new Promise(r => setTimeout(r, 600));
+  await new Promise(r => setTimeout(r, 800));
   await shotEl("#cyclicalTestModal", "shot_fatigue.png");
   await page.evaluate(() => { const m = document.getElementById("cyclicalTestModal"); if (m && m.open) m.close(); });
 
