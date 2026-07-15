@@ -120,12 +120,12 @@ class SavedTestAnalyzer:
                 # data, tell the operator exactly which CAP files to add and stop;
                 # the analysis auto-detects them on the next run.
                 return self._missing_cap_response(fut_runs, cap_runs)
-        elif test_type == "Shear":
-            # Shear, like EM, needs capacitance dropped into the CAP/ folder before
-            # analysis can run (the shorted-channel check is a capacitance check).
+        elif test_type in ("Shear", "Manual"):
+            # Shear and Manual, like EM, need capacitance dropped into the CAP/ folder
+            # before analysis can run (capacitance is never fabricated from force).
             # Prompt for the missing CAP files instead of running on force alone.
             if not cap_runs or (fut_runs and set(fut_runs.keys()) != set(cap_runs.keys())):
-                return self._missing_cap_response(fut_runs, cap_runs, label="Shear")
+                return self._missing_cap_response(fut_runs, cap_runs, label=test_type)
 
         if em_summary is not None:
             channel_stats = em_summary["channel_stats"]
@@ -1203,7 +1203,28 @@ class SavedTestAnalyzer:
         return "\n".join("\t".join(row) for row in [headers, negative_row, delta_row])
 
     def _manual_points(self):
-        # 1) recorded points from the browser (live manual test).
+        # Manual analysis is folder-based like EM and Shear: force comes from the FUT
+        # file and capacitance from the operator-dropped CAP file (same 8-channel
+        # layout EM/Shear use; the manual capacitance is the mean of the channels,
+        # taken from the nearest CAP sample by time). This is the source of truth
+        # whenever run files exist, so a real dropped CAP file drives the capacitance
+        # even when the live readings are still in the payload.
+        fut_runs = getattr(self, "_fut_runs", {}) or {}
+        cap_runs = getattr(self, "_cap_runs", {}) or {}
+        if fut_runs:
+            run_no = sorted(fut_runs)[0]
+            fut_points = fut_runs[run_no]
+            cap_rows = cap_runs.get(run_no, [])
+            cap_times = [c["time"] for c in cap_rows]
+            points = []
+            for fp in fut_points:
+                channels = self._cap_channels_at(cap_rows, cap_times, fp["time"])
+                capacitance = (sum(channels) / len(channels)) if channels else 0.0
+                points.append({"time": fp["time"], "force": fp["force"], "capacitance": capacitance})
+            if points:
+                return points
+
+        # in-browser live readings, used only when no run files exist on disk yet.
         points = []
         for index, item in enumerate(self.payload.get("manual_readings") or []):
             if not isinstance(item, dict):
@@ -1216,26 +1237,7 @@ class SavedTestAnalyzer:
         if points:
             return points
 
-        # 2) saved-data fallback: rebuild from the FUT (force/time) + CAP
-        # (capacitance = mean of the channels) files so Analyze Saved Data works
-        # on a manual folder with no in-browser readings.
-        fut_runs = getattr(self, "_fut_runs", {}) or {}
-        cap_runs = getattr(self, "_cap_runs", {}) or {}
-        if fut_runs:
-            run_no = sorted(fut_runs)[0]
-            fut_points = fut_runs[run_no]
-            cap_rows = cap_runs.get(run_no, [])
-            points = []
-            for index, fp in enumerate(fut_points):
-                capacitance = 0.0
-                if index < len(cap_rows) and cap_rows[index]["channels"]:
-                    channels = cap_rows[index]["channels"]
-                    capacitance = sum(channels) / len(channels)
-                points.append({"time": fp["time"], "force": fp["force"], "capacitance": capacitance})
-            if points:
-                return points
-
-        # 3) final fallback: synthetic preview points.
+        # final fallback: synthetic preview points.
         return [{"time": index * 0.1, "force": index * 0.2, "capacitance": 12 + index * 0.08} for index in range(25)]
 
     def _manual_log_csv(self, points):

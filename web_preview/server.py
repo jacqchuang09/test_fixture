@@ -607,10 +607,13 @@ class Handler(SimpleHTTPRequestHandler):
             self.write_reading_fut(fut_folder / "Run 1.csv", readings)
             return
         if test_type == "Manual" and payload.get("manual_readings"):
+            # Manual, like EM and Shear, needs REAL capacitance dropped into the CAP/
+            # folder. Capacitance is never fabricated from force: write the FUT force
+            # file only, leave CAP empty, and analysis returns the "add the capacitance
+            # file(s)" prompt until the operator drops a real CAP file in.
             manual_points = self._clean_manual_readings(payload.get("manual_readings"))
             readings = [{"time": point["time"], "force": point["force"]} for point in manual_points]
             self.write_reading_fut(fut_folder / "Run 1.csv", readings)
-            self.write_reading_cap(cap_folder / "Run 1.csv", readings)
             return
 
         # Only fabricate synthetic preview run files when the folder has NO real

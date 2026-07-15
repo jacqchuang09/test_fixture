@@ -566,7 +566,15 @@
           manual_readings: manualData,
         }));
         document.getElementById("manualAnalysisButton").disabled = false;
-        if (!result.ok) return;
+        // Missing capacitance (or other failure): show the message and stop, rather
+        // than opening an empty analysis window. Like EM/Shear, the operator drops the
+        // CAP file into the test folder's CAP/ folder and clicks Perform Analysis again.
+        if (!result || !result.ok) {
+          const msg = (result && result.message) || "Manual analysis could not run.";
+          setManualState("ERROR", msg);
+          showErrorDialog(msg, "Capacitance data needed");
+          return;
+        }
         setManualState("ANALYSIS", result.message || "manual analysis generated from the current preview data.");
         manualImages = (result.analysis && result.analysis.manual_images) ? result.analysis.manual_images : null;
         renderInteractivePanel("manual", result.analysis || null);
