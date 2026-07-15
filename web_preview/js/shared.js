@@ -44,11 +44,11 @@
       const shearAnalysisModal = document.getElementById("shearAnalysisModal");
       const shearStateEl = document.getElementById("shearState");
       const calibrationModal = document.getElementById("calibrationModal");
-      // X-NA08A50-E09 actuator limits. 17 mm is the working baseline/home; 41 mm is the max extrusion
-      // this fixture allows (the datasheet travel is 50.8 mm, but the actuator is held back so it
-      // cannot drive into the fixture). Keep this in sync with ZABER_TRAVEL_MAX_MM in run_engine.py.
+      // X-NA08A50-E09 actuator limits. 17 mm is the working baseline/home; 39 mm is the max extrusion
+      // this fixture allows (22 mm from home; the datasheet travel is 50.8 mm, but the actuator is held
+      // back so it cannot drive into the fixture). Keep this in sync with ZABER_TRAVEL_MAX_MM in run_engine.py.
       const ACTUATOR_MIN_MM = 17;
-      const ACTUATOR_MAX_MM = 41;
+      const ACTUATOR_MAX_MM = 39;
       const ACTUATOR_PEAK_THRUST_N = 25;
       // The actuator's physical home sits at 17 mm in the device's own coordinates, but
       // operators think in "distance from home" (home = 0 mm, extrude 10 mm reads 10 mm).
