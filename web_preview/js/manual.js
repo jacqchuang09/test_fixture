@@ -231,7 +231,7 @@
         const primaryTip = document.querySelector("#manualPrimaryControlField .sensor-help");
         if (primaryTip) primaryTip.dataset.tooltip = isForceMode
           ? "Target compression force in Newtons for force-controlled manual testing. Maximum allowed force is 32 N."
-          : "Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.";
+          : "Distance used for each Move Up or Move Down click. Move Down adds distance from home; Move Up subtracts it.";
         document.getElementById("manualIncrementField").classList.toggle("hidden", isForceMode);
         document.getElementById("manualTargetForceField").classList.toggle("hidden", !isForceMode);
         document.getElementById("manualControlStack").classList.toggle("force-mode", isForceMode);
