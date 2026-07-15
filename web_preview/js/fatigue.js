@@ -18,7 +18,9 @@
 
 
       function clampCyclicalLowerForce(value) {
-        return Math.min(32, Math.max(0, Number(value || 0)));
+        // floor is 0.1 N (not 0) so the cycle valley keeps the indenter in light
+        // contact with the sensor; 0.1 N granularity matches the upper force bound.
+        return Math.min(32, Math.max(0.1, Number(value || 0.1)));
       }
 
       function cyclicalBounds() {

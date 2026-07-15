@@ -1079,7 +1079,7 @@
         manualIncrementDistance: ["manual", "Increment Distance must be between 0.1 and 12 mm."],
         manualActuatorSpeed: ["manual", "Actuator Speed can be up to 2 mm/s."],
         manualTargetForce:   ["manual", "Target Force can be up to 32 N."],
-        cyclicalLowerForce:  ["fatigue", "Lower Force Bound must be a whole number of at least 1 N."],
+        cyclicalLowerForce:  ["fatigue", "Lower Force Bound must be between 0.1 and 32 N."],
         cyclicalUpperForce:  ["fatigue", "Upper Force Bound cannot exceed 32 N."],
         waveformFrequency:   ["fatigue", "Frequency must be between 0.1 and 1 Hz."],
         cyclicalCycleCount:  ["fatigue", "Number of Cycles must be a whole number of at least 1."],
