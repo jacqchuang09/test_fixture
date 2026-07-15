@@ -529,7 +529,13 @@
         const summary = document.getElementById("fatigue-summary");
         if (!summary) return;
         const stats = (analysis && analysis.fatigue && analysis.fatigue.stats) || {};
-        const rows = Object.keys(stats).map((key) => [escapeHtml(key), escapeHtml(String(stats[key]))]);
+        // Show measured values to 3 sig figs, but leave whole-number counts (e.g. cycle
+        // count) and non-numeric text (e.g. durations) untouched so they aren't corrupted.
+        const fmtStat = (v) => {
+          const n = Number(v);
+          return (Number.isFinite(n) && !Number.isInteger(n)) ? sig3(n) : String(v);
+        };
+        const rows = Object.keys(stats).map((key) => [escapeHtml(key), escapeHtml(fmtStat(stats[key]))]);
         summary.innerHTML = rows.length
           ? `<h3 class="analysis-section-title">Fatigue summary</h3>${statValueTable(rows)}`
           : `<p class="hint">No fatigue summary found. Expected Fatigue_Stats.xlsx (or .csv) in this folder.</p>`;
@@ -724,6 +730,15 @@
       function coefficientOfVariation(values) {
         const stats = summaryStats(values);
         return (stats.standardDeviation / Math.max(0.001, Math.abs(stats.average))) * 100;
+      }
+
+      // Format an analysis-result number to 3 significant figures (e.g. 42.678 -> "42.7",
+      // 0.0123456 -> "0.0123", 42.0 -> "42"). Used for every displayed/exported analysis
+      // stat so results read consistently at 3 sig figs, not a fixed number of decimals.
+      function sig3(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n === 0) return "0";
+        return String(Number(n.toPrecision(3)));
       }
 
       function clampForce(value) {

@@ -347,11 +347,11 @@
         const channels = Array.from({ length: 8 }, (_, index) => index + 1);
         const negativeCells = channels.map((channel) => {
           const item = negativeByChannel.find((entry) => entry.channel === channel);
-          return item?.values?.length ? `${Math.min(...item.values).toFixed(3)} pF` : "none";
+          return item?.values?.length ? `${sig3(Math.min(...item.values))} pF` : "none";
         });
         const deltaCells = channels.map((channel) => {
           const events = deltaEventsByChannel.filter((event) => event.channel === channel);
-          return events.length ? `${Math.max(...events.map((event) => event.delta)).toFixed(3)} pF` : "none";
+          return events.length ? `${sig3(Math.max(...events.map((event) => event.delta)))} pF` : "none";
         });
         const row = (label, cells) => `
           <tr>

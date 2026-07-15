@@ -691,9 +691,10 @@ class Handler(SimpleHTTPRequestHandler):
         return float(match.group(0)) if match else default
 
     def _format_value(self, value, unit):
+        # analysis results are shown to 3 significant figures.
         if unit == "%":
-            return f"{value:.2f}%"
-        return f"{value:.3f}{unit}"
+            return f"{value:.3g}%"
+        return f"{value:.3g}{unit}"
 
     def _clean_force_readings(self, readings):
         # clean shear data coming from the browser before writing it to csv.

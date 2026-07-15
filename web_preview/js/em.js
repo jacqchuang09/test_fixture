@@ -627,7 +627,7 @@
             markers.push({ x: ch.infl.kpa, y: ch.infl.cap, axis: "L", color: "#ef4444", r: 6, stroke: "#ffffff" });
             markers.push({ x: ch.infl.kpa, y: ch.infl.ps, axis: "R", color: "#111827", r: 4, stroke: "#f28c28" });
           }
-          const inflLabel = ch.infl ? ` | PS=${ch.infl.ps.toFixed(3)} @ ${ch.infl.kpa.toFixed(1)} kPa` : " | no inflection";
+          const inflLabel = ch.infl ? ` | PS=${sig3(ch.infl.ps)} @ ${sig3(ch.infl.kpa)} kPa` : " | no inflection";
           return {
             title: `Run# ${runData.run} - CH ${j + 1}${inflLabel}`,
             xlabel: "Pressure (kPa)", ylabel: "Change in CAP (pF)", ylabelR: "1st deriv (pF/kPa)",
@@ -852,7 +852,7 @@
               <line x1="${x0 + padLeft}" y1="${toCapY(2.5)}" x2="${x0 + panelWidth - padRight}" y2="${toCapY(2.5)}" stroke="#f8fafc"></line>
               <line x1="${toX(maxPressure / 2)}" y1="${y0 + padTop}" x2="${toX(maxPressure / 2)}" y2="${y0 + panelHeight - padBottom}" stroke="#f8fafc"></line>
             </g>
-            <text x="${x0 + panelWidth / 2}" y="${y0 + 22}" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="900" font-family="Inter, sans-serif">R${runNumber} CH${channel} | PS=${peakSensitivity.toFixed(3)} @ ${peakPressure.toFixed(1)} kPa</text>
+            <text x="${x0 + panelWidth / 2}" y="${y0 + 22}" text-anchor="middle" fill="#f8fafc" font-size="13" font-weight="900" font-family="Inter, sans-serif">R${runNumber} CH${channel} | PS=${sig3(peakSensitivity)} @ ${sig3(peakPressure)} kPa</text>
             <text x="${x0 + 13}" y="${y0 + panelHeight / 2}" transform="rotate(-90 ${x0 + 13} ${y0 + panelHeight / 2})" text-anchor="middle" fill="${blue}" font-size="11" font-family="Inter, sans-serif">CAP (pF)</text>
             <text x="${x0 + panelWidth - 9}" y="${y0 + panelHeight / 2}" transform="rotate(90 ${x0 + panelWidth - 9} ${y0 + panelHeight / 2})" text-anchor="middle" fill="${orange}" font-size="11" font-family="Inter, sans-serif">dCAP/dkPa</text>
             <text x="${x0 + panelWidth / 2}" y="${y0 + panelHeight - 8}" text-anchor="middle" fill="#f8fafc" font-size="11" font-family="Inter, sans-serif">Pressure (kPa)</text>
@@ -1149,21 +1149,21 @@
           });
         }
         const rows = [
-          ["Mean PS at Inflection", (stats) => stats.psAtInflection.average.toFixed(3)],
-          ["Std PS at Inflection", (stats) => stats.psAtInflection.standardDeviation.toFixed(3)],
-          ["CoV PS at Inflection", (stats) => `${stats.covPsAtInflection.toFixed(2)}%`],
-          ["Min PS at Inflection", (stats) => stats.psAtInflection.min.toFixed(3)],
-          ["Max PS at Inflection", (stats) => stats.psAtInflection.max.toFixed(3)],
-          ["Mean Max kPa", (stats) => `${stats.maxKpa.average.toFixed(3)} kPa`],
-          ["Std Max kPa", (stats) => `${stats.maxKpa.standardDeviation.toFixed(3)} kPa`],
-          ["CoV Max kPa", (stats) => `${stats.covMaxKpa.toFixed(2)}%`],
-          ["Min Max kPa", (stats) => `${stats.maxKpa.min.toFixed(3)} kPa`],
-          ["Max Max kPa", (stats) => `${stats.maxKpa.max.toFixed(3)} kPa`],
-          ["Mean Max CAP", (stats) => `${stats.maxCap.average.toFixed(3)} pF`],
-          ["Std Max CAP", (stats) => `${stats.maxCap.standardDeviation.toFixed(3)} pF`],
-          ["CoV Max CAP", (stats) => `${stats.covMaxCap.toFixed(2)}%`],
-          ["Min Max CAP", (stats) => `${stats.maxCap.min.toFixed(3)} pF`],
-          ["Max Max CAP", (stats) => `${stats.maxCap.max.toFixed(3)} pF`],
+          ["Mean PS at Inflection", (stats) => sig3(stats.psAtInflection.average)],
+          ["Std PS at Inflection", (stats) => sig3(stats.psAtInflection.standardDeviation)],
+          ["CoV PS at Inflection", (stats) => `${sig3(stats.covPsAtInflection)}%`],
+          ["Min PS at Inflection", (stats) => sig3(stats.psAtInflection.min)],
+          ["Max PS at Inflection", (stats) => sig3(stats.psAtInflection.max)],
+          ["Mean Max kPa", (stats) => `${sig3(stats.maxKpa.average)} kPa`],
+          ["Std Max kPa", (stats) => `${sig3(stats.maxKpa.standardDeviation)} kPa`],
+          ["CoV Max kPa", (stats) => `${sig3(stats.covMaxKpa)}%`],
+          ["Min Max kPa", (stats) => `${sig3(stats.maxKpa.min)} kPa`],
+          ["Max Max kPa", (stats) => `${sig3(stats.maxKpa.max)} kPa`],
+          ["Mean Max CAP", (stats) => `${sig3(stats.maxCap.average)} pF`],
+          ["Std Max CAP", (stats) => `${sig3(stats.maxCap.standardDeviation)} pF`],
+          ["CoV Max CAP", (stats) => `${sig3(stats.covMaxCap)}%`],
+          ["Min Max CAP", (stats) => `${sig3(stats.maxCap.min)} pF`],
+          ["Max Max CAP", (stats) => `${sig3(stats.maxCap.max)} pF`],
         ];
         return `
           <div class="stats-table-wrap">
@@ -1342,7 +1342,7 @@
         const center = [2, 3, 4, 5];
         const outer = [0, 1, 6, 7];
         const avg = (items) => items.reduce((sum, value) => sum + value, 0) / Math.max(1, items.length);
-        const avgCov = (metric, indexes) => `${avg(indexes.map((index) => channelMetrics[index][metric])).toFixed(2)}%`;
+        const avgCov = (metric, indexes) => `${sig3(avg(indexes.map((index) => channelMetrics[index][metric])))}%`;
         const compressionShortThresholdPf = 1000000;
         const shorted = channels
           .map((channel) => ({
@@ -1356,10 +1356,10 @@
         const redoAttemptCount = config().redo_run ? 1 : 0;
         const runTested = runCounted + redoAttemptCount;
         const centerMeanByPressure = pressureIndexes.map((pressureIndex) => {
-          return avg(center.map((channelIndex) => channelMetrics[channelIndex].capAtPressures[pressureIndex].average)).toFixed(3);
+          return sig3(avg(center.map((channelIndex) => channelMetrics[channelIndex].capAtPressures[pressureIndex].average)));
         });
         const centerCovByPressure = pressureIndexes.map((pressureIndex) => {
-          return `${avg(center.map((channelIndex) => channelMetrics[channelIndex].capPressureCov[pressureIndex])).toFixed(2)}%`;
+          return `${sig3(avg(center.map((channelIndex) => channelMetrics[channelIndex].capPressureCov[pressureIndex])))}%`;
         });
         // editable user fields (filled in the Report Output tab); auto fields are computed.
         const fieldValue = (id) => (document.getElementById(id)?.value || "").trim();
@@ -1405,9 +1405,9 @@
         ];
         const row = [
           ...baseValues,
-          ...channelMetrics.map((metrics) => metrics.ps.average.toFixed(3)),
+          ...channelMetrics.map((metrics) => sig3(metrics.ps.average)),
           avgCov("psCov", center), avgCov("psCov", outer), avgCov("psCov", channels.map((_, index) => index)),
-          ...channelMetrics.map((metrics) => metrics.kpa.average.toFixed(3)),
+          ...channelMetrics.map((metrics) => sig3(metrics.kpa.average)),
           avgCov("kpaCov", center), avgCov("kpaCov", outer), avgCov("kpaCov", channels.map((_, index) => index)),
           runTested, runCounted, redoNotes,
         ];

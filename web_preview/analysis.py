@@ -978,9 +978,9 @@ class SavedTestAnalyzer:
         headers.extend(f"CH{item['channel']} Mean Max CAP" for item in channel_stats)
         runs_text = ", ".join(str(r) for r in active) if active else "all"
         row = [self.sensor_id, "PASS", runs_text, redo.get("reason_summary") or "-", str(self.analysis_folder)]
-        row.extend(f"{item['ps']['mean']:.3f}" for item in channel_stats)
-        row.extend(f"{item['kpa']['mean']:.3f}" for item in channel_stats)
-        row.extend(f"{item['cap']['mean']:.3f}" for item in channel_stats)
+        row.extend(f"{item['ps']['mean']:.3g}" for item in channel_stats)
+        row.extend(f"{item['kpa']['mean']:.3g}" for item in channel_stats)
+        row.extend(f"{item['cap']['mean']:.3g}" for item in channel_stats)
         return "\n".join(["\t".join(headers), "\t".join(row)])
 
     def _write_em_layout(self, readings, channel_stats, cap_runs, report_output, em_summary=None):
@@ -1314,6 +1314,7 @@ class SavedTestAnalyzer:
         return float(match.group(0)) if match else default
 
     def _format_value(self, value, unit):
+        # analysis results are shown to 3 significant figures.
         if unit == "%":
-            return f"{value:.2f}%"
-        return f"{value:.3f}{unit}"
+            return f"{value:.3g}%"
+        return f"{value:.3g}{unit}"
