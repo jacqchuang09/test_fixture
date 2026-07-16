@@ -166,11 +166,25 @@ if _REAL_FUTEK_AVAILABLE:
                 "sampling rate",
                 lambda: FUTEK.Devices.DeviceUSB225.GetChannelXSamplingRate(self.USB225, 0),
                 default="100")
-            # set a steady sampling rate for the python test loop.
+            # Set a high, steady sampling rate. The force read loop runs at ~100 Hz, so
+            # the device MUST produce new samples at least that fast or the loop re-reads
+            # the same frame (repeated force/timestamps) - a stale held value delays the
+            # force-limit stop and overshoots the target. 400 Hz sits well above the loop
+            # (4x margin) so every read gets a fresh sample; it is a device-supported rate.
+            FUTEK_SAMPLE_RATE_HZ = "400"
             try:
-                self.USB225.SetChannelXSamplingRate(0, "100")
+                self.USB225.SetChannelXSamplingRate(0, FUTEK_SAMPLE_RATE_HZ)
             except Exception as e:
-                print(f"[futek] could not set sampling rate (using device default): {e}")
+                print(f"[futek] could not set sampling rate to {FUTEK_SAMPLE_RATE_HZ} Hz "
+                      f"(using device default): {e}")
+            # Read it back so the console shows the rate the device is ACTUALLY running at.
+            # If this prints well below 100, that is the repeated-reading / overshoot cause.
+            try:
+                actual_rate = FUTEK.Devices.DeviceUSB225.GetChannelXSamplingRate(self.USB225, 0)
+                print(f"[futek] load cell sampling rate is now {actual_rate} Hz "
+                      f"(read loop is ~100 Hz; device must be >= that to avoid repeated readings).")
+            except Exception as e:
+                print(f"[futek] could not read back sampling rate: {e}")
 
             # THE REAL GATE: if force cannot be read, this is not a working load cell -
             # let the exception propagate so the caller falls back to simulated force
