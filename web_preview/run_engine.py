@@ -20,10 +20,6 @@ FUJI_EXTRUSION_MAX_MM = 12.0  # ceiling for the operator-set Fuji extrusion dist
 SAMPLE_DT = 0.010           # 100 Hz sampling - record force every 10 ms
 JOG_POLL_DT = 0.04          # manual jog: poll the stage ~25 Hz (gentler on the serial port)
 UPPER_LIMIT_N = 32.0        # EM run press target - stop the press once force reaches this
-# Ease off the EM press this many N below the target so the constant-velocity descend
-# can slow down and settle near 32 N instead of coasting toward the 33 N ceiling.
-EM_EASE_OFF_N = 4.0
-EM_EASE_SPEED_FRAC = 0.2    # final-approach speed as a fraction of the descend speed
 # travel safety: the Zaber stage's travel limits (mm). HOME_MM (17) is the
 # minimum / retracted end and the floor of travel; a press extrudes UPWARD from
 # there toward the 39 mm maximum (22 mm from home). A press is stopped if the
@@ -929,7 +925,6 @@ class RunEngine:
                     axis.move_velocity(descend, Units.VELOCITY_MILLIMETRES_PER_SECOND)
                 except Exception:
                     pass
-            press_speed = descend    # current descend speed; eased down near the target
             init_force = None
             while True:
                 if STATE.stop_requested:
@@ -957,17 +952,6 @@ class RunEngine:
                 if stage >= UPPER_LIMIT_N:
                     self._stop_axis(axis)
                     break
-                # Ease off near the target so the press settles close to 32 N instead of
-                # coasting toward the 33 N ceiling. A constant-velocity descend overshoots
-                # the force limit by its stop/deceleration distance; dropping to a crawl for
-                # the final EM_EASE_OFF_N shrinks that. Speed only steps down, never up; the
-                # force / spike / ceiling guards above are unchanged.
-                if axis is not None and stage >= UPPER_LIMIT_N - EM_EASE_OFF_N and press_speed > descend * EM_EASE_SPEED_FRAC:
-                    press_speed = descend * EM_EASE_SPEED_FRAC
-                    try:
-                        axis.move_velocity(press_speed, Units.VELOCITY_MILLIMETRES_PER_SECOND)
-                    except Exception:
-                        pass
                 # travel safety: never drive into the actuator's mechanical end stop.
                 if self._at_travel_limit():
                     self._stop_axis(axis); self._home(axis)
