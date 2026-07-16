@@ -952,7 +952,12 @@ class RunEngine:
                 force = self._read_force(futek, depth)
                 if init_force is None:
                     init_force = force
-                stage = force - init_force
+                # tare to baseline, then MAGNITUDE (positive for either load-cell
+                # polarity - same convention as the Fuji/shear/fatigue loops). A signed
+                # stage from a cell that reads negative under compression never reaches
+                # UPPER_LIMIT_N, so the press ran into the 33 N ceiling and aborted as
+                # a "force spike" instead of stopping at 32 N and saving the run.
+                stage = abs(force - init_force)
                 record(stage, self._spike_limit(descend * SAMPLE_DT))
                 if stage >= UPPER_LIMIT_N:
                     self._stop_axis(axis)
@@ -1440,7 +1445,10 @@ class RunEngine:
                         pass
                     STATE._read_position()
                     d = max(0.0, STATE.position_mm - start_pos)
-                    record(self._read_force(force_futek, d) - cal_init, cycle)
+                    # tare then magnitude (either cell polarity), matching the
+                    # calibration press above - a signed value from a negative-going
+                    # cell records negative force and disarms the ceiling guard.
+                    record(abs(self._read_force(force_futek, d) - cal_init), cycle)
                 self._set(cycle=cycle)
                 time.sleep(SAMPLE_DT)
 
