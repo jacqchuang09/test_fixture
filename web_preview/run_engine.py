@@ -22,14 +22,14 @@ JOG_POLL_DT = 0.04          # manual jog: poll the stage ~25 Hz (gentler on the 
 UPPER_LIMIT_N = 32.0        # EM run press target - stop the press once force reaches this
 # travel safety: the Zaber stage's travel limits (mm). HOME_MM (17) is the
 # minimum / retracted end and the floor of travel; a press extrudes UPWARD from
-# there toward the 39 mm maximum (22 mm from home). A press is stopped if the
+# there toward the 42 mm maximum (25 mm from home). A press is stopped if the
 # actuator reaches either end, so it can never drive into its own mechanical hard
 # stop. The frontend uses the same range (ACTUATOR_MIN_MM / ACTUATOR_MAX_MM in
-# shared.js). 39 mm is the max extrusion this fixture allows, NOT the 50.8 mm
+# shared.js). 42 mm is the max extrusion this fixture allows, NOT the 50.8 mm
 # datasheet travel - the actuator is held back so it cannot drive into the fixture.
 # Set these to match the actual stage if it differs.
 ZABER_TRAVEL_MIN_MM = 17.0
-ZABER_TRAVEL_MAX_MM = 39.0
+ZABER_TRAVEL_MAX_MM = 42.0
 TRAVEL_MARGIN_MM = 0.5      # stop this far before the physical end stop
 LBF_TO_N = -4.44822         # FUTEK pounds -> newtons (and polarity flip)
 
@@ -789,7 +789,7 @@ class RunEngine:
                 prev_force = force
                 # never drive into the actuator's mechanical end stop. This is
                 # DIRECTIONAL: compression starts at the 17 mm home (the travel minimum)
-                # and moves toward the 39 mm maximum, so only the max end is a limit
+                # and moves toward the 42 mm maximum, so only the max end is a limit
                 # when going down. (A non-directional check would false-trip at home.)
                 if going_down and STATE.position_mm >= ZABER_TRAVEL_MAX_MM - TRAVEL_MARGIN_MM:
                     self._stop_axis(axis)
