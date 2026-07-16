@@ -166,23 +166,31 @@ if _REAL_FUTEK_AVAILABLE:
                 "sampling rate",
                 lambda: FUTEK.Devices.DeviceUSB225.GetChannelXSamplingRate(self.USB225, 0),
                 default="100")
-            # Set a high, steady sampling rate. The force read loop runs at ~100 Hz, so
-            # the device MUST produce new samples at least that fast or the loop re-reads
-            # the same frame (repeated force/timestamps) - a stale held value delays the
-            # force-limit stop and overshoots the target. 400 Hz sits well above the loop
-            # (4x margin) so every read gets a fresh sample; it is a device-supported rate.
-            FUTEK_SAMPLE_RATE_HZ = "400"
-            try:
-                self.USB225.SetChannelXSamplingRate(0, FUTEK_SAMPLE_RATE_HZ)
-            except Exception as e:
-                print(f"[futek] could not set sampling rate to {FUTEK_SAMPLE_RATE_HZ} Hz "
-                      f"(using device default): {e}")
-            # Read it back so the console shows the rate the device is ACTUALLY running at.
-            # If this prints well below 100, that is the repeated-reading / overshoot cause.
+            # Set a high, steady sampling rate. The force read loop samples every 10 ms
+            # (~100 Hz), so the device MUST produce new samples at least that fast or the
+            # loop re-reads the same frame (repeated force/timestamps) - a stale held
+            # value delays the force-limit stop and overshoots the target. Ask for 400 Hz
+            # (a fresh sample every 2.5 ms, 4x margin over the loop); if the device
+            # rejects that, fall back to 100 Hz (10 ms) which still matches the loop.
+            for want_hz in ("400", "100"):
+                try:
+                    self.USB225.SetChannelXSamplingRate(0, want_hz)
+                    break
+                except Exception as e:
+                    print(f"[futek] device rejected a {want_hz} Hz sampling rate: {e}")
+            # Read the rate back so the console shows what the device is ACTUALLY running
+            # at (a Set call can fail silently). Below 100 Hz = repeated readings.
             try:
                 actual_rate = FUTEK.Devices.DeviceUSB225.GetChannelXSamplingRate(self.USB225, 0)
                 print(f"[futek] load cell sampling rate is now {actual_rate} Hz "
-                      f"(read loop is ~100 Hz; device must be >= that to avoid repeated readings).")
+                      f"(read loop samples every 10 ms; the device must run >= 100 Hz "
+                      f"to avoid repeated readings).")
+                try:
+                    if float(str(actual_rate)) < 100:
+                        print("[futek] WARNING: the device is sampling SLOWER than the 10 ms "
+                              "read loop - force readings will repeat and lag the true force.")
+                except (TypeError, ValueError):
+                    pass
             except Exception as e:
                 print(f"[futek] could not read back sampling rate: {e}")
 
