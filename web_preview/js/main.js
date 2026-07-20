@@ -205,13 +205,28 @@
         const comportInput = document.getElementById("comport");
         const surfaceAreaInput = document.getElementById("surfaceArea");
 
+        // Run count. This function runs on every config refresh (com port change, verify,
+        // begin test, existing-test check), so it must never overwrite a count the
+        // operator typed. It used to treat a value of "1" as "unset" and rewrite it to 3,
+        // which silently turned a deliberate single run into three. Instead, remember
+        // whether WE set the field (redo forces 1, run-less tests blank it) and only
+        // restore the default when leaving one of those modes or when the field is empty.
         if (redoRun) {
+          if (runsInput.dataset.autoValue !== "redo") runsInput.dataset.prevRuns = runsInput.value;
           runsInput.value = 1;
+          runsInput.dataset.autoValue = "redo";
         } else {
           runToRedoInput.value = "";
           if (isShear || isManual || isCyclical) {
+            if (runsInput.dataset.autoValue !== "cleared") runsInput.dataset.prevRuns = runsInput.value;
             runsInput.value = "";
-          } else if (!runsInput.value || runsInput.value === "1") {
+            runsInput.dataset.autoValue = "cleared";
+          } else if (runsInput.dataset.autoValue) {
+            // leaving redo mode or a run-less test type: put back what the operator had.
+            runsInput.value = runsInput.dataset.prevRuns || 3;
+            runsInput.dataset.autoValue = "";
+            runsInput.dataset.prevRuns = "";
+          } else if (!runsInput.value) {
             runsInput.value = 3;
           }
         }
@@ -980,6 +995,12 @@
         // user gets feedback on the config page instead of waiting until START.
         if (result.connected === false) {
           setMainMessage(result.message || `Couldn't connect to a Zaber on ${select.value}. Try a different COM port.`, "error");
+        } else if (result.position_invalid) {
+          // The port opened, but the actuator's trajectory position came back wrong, so it
+          // will refuse to move. Prompt with the Zaber Launcher fix instead of letting the
+          // operator discover it when a test won't start.
+          setMainMessage(result.message || "The Zaber reports a position outside its travel range.", "error");
+          showZaberPositionDialog(result.message);
         } else if (result.connected === true) {
           setMainMessage(result.message || `Connected to Zaber on ${select.value}.`, "");
         } else if (announce && result.message) {
@@ -1009,6 +1030,13 @@
       });
       document.getElementById("surfaceArea").addEventListener("input", scheduleExistingTestCheck);
       document.getElementById("surfaceArea").addEventListener("change", scheduleExistingTestCheck);
+      // once the operator types a run count it is theirs: clear the "we set this" marks so
+      // updateTestConfigState leaves the value alone on later refreshes.
+      document.getElementById("runs").addEventListener("input", () => {
+        const runsInput = document.getElementById("runs");
+        runsInput.dataset.autoValue = "";
+        runsInput.dataset.prevRuns = "";
+      });
       document.getElementById("comport").addEventListener("change", () => {
         updateComPortPlaceholder();
         updateFolderInfoTag();

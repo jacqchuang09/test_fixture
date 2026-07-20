@@ -562,6 +562,19 @@
           "Load cell disconnected");
       }
 
+      // The actuator connected but reports a position outside its travel range, which means
+      // its trajectory position was lost on a power cycle (the reported value varies). The
+      // stage refuses to move in that state and homing from the GUI does not fix it, so
+      // prompt with the exact Zaber Launcher steps that do.
+      function showZaberPositionDialog(message) {
+        showErrorDialog(
+          (message ? String(message).trim() + " " : "") +
+            "Open the Zaber Launcher and set the trajectory position to 17 mm " +
+            "(Device Settings, then Motion), then reconnect the Zaber here and use " +
+            "Open Calibration and Home to confirm it is at 17 mm before testing.",
+          "Zaber position needs to be reset");
+      }
+
       // Route a backend disconnect (status.disconnect === true) to the correct dialog.
       // sensor === "loadcell" means the FUTEK dropped; anything else is the actuator.
       // The window's status pill already shows the persistent DISCONNECTED state, so no

@@ -15,6 +15,8 @@ import time
 from zaber_cli import ZaberCLI  # importable: config.py puts the repo root on sys.path
 
 HOME_MM = 17.0
+TRAVEL_MAX_MM = 42.0             # working travel ceiling (matches run_engine)
+POSITION_SANITY_MARGIN_MM = 0.5  # slack so a normal reading never trips the check
 
 
 def list_ports():
@@ -164,6 +166,21 @@ class HardwareState:
             # move-to-17 at the start of each test became a no-op and the press began from
             # the wrong place. Tests now drive to the true 17 mm home with move_absolute.
             self._read_position()
+            # Sanity-check the position the device reports. The actuator normally keeps a
+            # correct absolute position across power cycles, but its trajectory position can
+            # come back wrong after one - it reports some value outside the working range
+            # (not always the same value) instead of the 17 mm home, and then the stage
+            # refuses to move. The only fix is resetting the trajectory position in the Zaber
+            # Launcher, so flag whatever it reported and let the UI prompt the operator with
+            # those steps instead of leaving them stuck.
+            pos = self.position_mm
+            if pos < HOME_MM - POSITION_SANITY_MARGIN_MM or pos > TRAVEL_MAX_MM + POSITION_SANITY_MARGIN_MM:
+                return {
+                    "ok": True, "connected": True, "comport": comport,
+                    "position_invalid": True, "position_mm": pos,
+                    "message": (f"The Zaber on {comport} reports {pos:.2f} mm, outside its "
+                                f"{HOME_MM:.0f} to {TRAVEL_MAX_MM:.0f} mm travel range."),
+                }
             return {
                 "ok": True, "connected": True, "comport": comport,
                 "message": f"Connected to Zaber on {comport}. Current position: {self.position_mm - HOME_MM:.2f} mm from home.",
