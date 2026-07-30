@@ -9,6 +9,9 @@ import math
 import os
 import threading
 import time
+import subprocess
+import sys
+import signal
 from pathlib import Path
 
 from hardware import STATE, _mm_unit
@@ -853,6 +856,10 @@ class RunEngine:
         return {"ok": True, "force": round(force, 4), "position": round(STATE.position_mm, 4),
                 "simulated": simulated}
 
+    # --- assumes these are already imported at module scope in the real file ---
+    # import os, sys, time, signal, subprocess
+    # from pathlib import Path
+
     def _run(self, run_number, test_folder, surface_area_mm2, redo_of=None, reason=None):
         axis = STATE.axis                 # None when the Zaber is simulated
         futek = _open_futek()             # None when the FUTEK is simulated
@@ -862,20 +869,34 @@ class RunEngine:
         # do, and route it through the load-cell disconnect UI (dialog + banner + redo).
         if _futek_init_failed(futek):
             self._set(status="error", disconnect=True, sensor="loadcell",
-                      message=FUTEK_INIT_FAIL_MSG)
+                    message=FUTEK_INIT_FAIL_MSG)
             return
         simulated = (axis is None) or (futek is None)
         descend = SIM_DESCEND_MM_S if simulated else REAL_DESCEND_MM_S
         ascend = SIM_ASCEND_MM_S if simulated else REAL_ASCEND_MM_S
 
         self._set(status="running", run=run_number, simulated=simulated,
-                  force=0.0, samples=0, message="", position=HOME_MM, disconnect=False, safety_stop=False)
+                force=0.0, samples=0, message="", position=HOME_MM, disconnect=False, safety_stop=False)
 
         readings = []   # (index, force_N, time_s)
         trace = []      # [time, force] for the dense (100 Hz) live force graph
-        t0 = time.time()
         idx = 0
         prev_force = None
+
+        # --- launch the JLink CAP logger and establish the shared t0 clock ---
+        # Only on real hardware: a simulated run has no CAP sensor to sync to, and
+        # spawning jlink.py against nothing would just hang waiting for JLINK_READY.
+        # Force and CAP must share this same t0 or the delay/cross-correlation
+        # analysis downstream has no common time axis to work from.
+        jlink_proc = None
+        if simulated:
+            t0 = time.time()
+        else:
+            jlink_proc, t0 = self._launch_jlink_and_sync(run_number, test_folder)
+            if jlink_proc is None:
+                self._set(status="error", disconnect=True, sensor="caplogger",
+                        message="CAP logger (JLink) failed to start / never became ready.")
+                return
 
         def record(stage_force, spike_limit):
             nonlocal idx, prev_force
@@ -898,8 +919,8 @@ class RunEngine:
                 raise ForceSpikeStop()
             prev_force = stage_force
             # simulated runs use a deterministic 100 Hz clock so the time axis is
-            # perfectly uniform (10 ms apart); real runs use the wall clock, which
-            # follows the real FUTEK cadence.
+            # perfectly uniform (10 ms apart); real runs use the wall clock (shared
+            # with the JLink CAP logger via t0), which follows the real FUTEK cadence.
             t = idx * SAMPLE_DT if simulated else (time.time() - t0)
             idx += 1
             readings.append((idx, stage_force, t))
@@ -935,7 +956,7 @@ class RunEngine:
                     self._stop_axis(axis); self._home(axis)
                     STATE.pause_requested = False
                     self._set(status="paused", position=HOME_MM,
-                              message=f"Run {run_number} paused - repeat this run.")
+                            message=f"Run {run_number} paused - repeat this run.")
                     return
 
                 if axis is None:
@@ -961,7 +982,7 @@ class RunEngine:
                 if self._at_travel_limit():
                     self._stop_axis(axis); self._home(axis)
                     self._set(status="error", safety_stop=True, position=HOME_MM, trace=list(trace),
-                              message="Actuator reached its travel limit. Run stopped for safety.")
+                            message="Actuator reached its travel limit. Run stopped for safety.")
                     return
                 time.sleep(SAMPLE_DT)
 
@@ -984,7 +1005,7 @@ class RunEngine:
                     self._stop_axis(axis); self._home(axis)
                     STATE.pause_requested = False
                     self._set(status="paused", position=HOME_MM,
-                              message=f"Run {run_number} paused - repeat this run.")
+                            message=f"Run {run_number} paused - repeat this run.")
                     return
                 if axis is None:
                     depth -= ascend * SAMPLE_DT
@@ -1002,19 +1023,19 @@ class RunEngine:
             # Hold this run in memory instead of writing it now: no run files are
             # created during the EM test. They are written to disk (and logged) only
             # when the operator clicks Perform Analysis - see flush_pending_runs.
-            # Capacitance is NEVER fabricated: the CAP/ folder is filled by the
-            # operator's real capacitance file(s), so only FUT force data is captured
-            # here and the analysis shows empty capacitance graphs until CAP is added.
+            # CAP is written directly to test_folder/CAP by jlink.py as it runs, so
+            # by the time we get here the CAP file for this run_number already
+            # exists on disk (or never started, if we were simulated).
             self.pending_runs[int(run_number)] = {
                 "readings": list(readings), "redo_of": redo_of, "reason": reason,
             }
             self._set(status="completed", position=HOME_MM, redo_of=redo_of, trace=list(trace),
-                      message=f"Run {run_number} complete - {len(readings)} samples recorded (saved when you click Perform Analysis).")
+                    message=f"Run {run_number} complete - {len(readings)} samples recorded (saved when you click Perform Analysis).")
         except ForceSpikeStop:
             self._stop_axis(axis)
             self._home(axis)
             self._set(status="error", safety_stop=True, position=HOME_MM,
-                      message="Force spike detected. Motion stopped for safety.")
+                    message="Force spike detected. Motion stopped for safety.")
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
         except FutekDisconnect:
@@ -1030,11 +1051,59 @@ class RunEngine:
             self._stop_axis(axis)
             self._home(axis)
             self._set(status="error", position=HOME_MM,
-                      message=f"Run failed: {exc}")
+                    message=f"Run failed: {exc}")
         finally:
             STATE._move_loop_active = False   # release the serial port
             # the cached FUTEK stays open between operations (reopening it costs many
             # seconds); it is only dropped on a read failure / disconnect.
+            # JLink, by contrast, is per-run: it must be stopped here on EVERY exit
+            # path above (normal completion, stop, pause, all three exceptions) or a
+            # zombie jlink.py process keeps the J-Link lock and blocks the next run.
+            self._stop_jlink_subprocess(jlink_proc)
+
+
+    def _launch_jlink_and_sync(self, run_number, test_folder):
+        """Launches jlink.py, waits for JLINK_READY, sends back shared t0.
+        Returns (proc, t0) on success, (None, None) on failure."""
+        cmd = [sys.executable, 'jlink.py', str(test_folder), str(run_number)]
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        proc = subprocess.Popen(
+            cmd, creationflags=creationflags,
+            stdout=subprocess.PIPE, stdin=subprocess.PIPE, text=True,
+        )
+
+        ready = False
+        for line in proc.stdout:
+            if line.strip() == "JLINK_READY":
+                ready = True
+                break
+            if proc.poll() is not None:
+                break
+
+        if not ready:
+            return None, None
+
+        t0 = time.time()
+        try:
+            proc.stdin.write(f"{t0}\n")
+            proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            return None, None
+
+        return proc, t0
+
+
+    def _stop_jlink_subprocess(self, proc):
+        if proc is None:
+            return
+        if os.name == 'nt':
+            proc.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
 
     # -- the Fuji-film calibration press ------------------------------------
 
