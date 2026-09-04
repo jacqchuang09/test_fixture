@@ -1,6 +1,6 @@
 # Zaber Browser GUI
 
-This folder is the current working version of the Zaber/FUTEK testing interface. The main app is a browser page, but it is still connected to Python through a small local backend.
+This folder is the current working version of the Zaber/FUTEK testing interface. Reference the Install & Launch Guide https://docs.google.com/document/d/1RJJx2jMUhhXh7YFNoOQ6MpZyVmPvnl0KqJy4FgH75OA/edit?usp=sharing.
 
 ## What to open
 
@@ -87,27 +87,6 @@ then the browser reached Python, but the FUTEK runtime is not ready yet. Install
 5. The Zaber Control Stage popup opens.
 6. Click Start to check the backend and begin the hardware path.
 7. Use Pause or Stop if needed.
-
-## User Stories Added
-
-### Sensor ID Builder
-
-User Story: As a test fixture user, I want the GUI to automatically generate the Sensor ID from fabrication fields so that I do not have to manually type or remember the full Sensor ID format.
-
-Acceptance Criteria:
-
-- The Sensor ID field is generated from one connected segmented row: `YY` `MM` `DD` `B ##` `S ##` `X`.
-- Year, Month, and Day are auto-filled using the current date.
-- Batch Number visually includes the fixed `B` prefix, and the user types only the two numeric digits.
-- Sensor Number visually includes the fixed `S` prefix, and the user types only the two numeric digits.
-- Fabrication Location is a one-character text input and must be `A` or `B`.
-- The generated Sensor ID follows the format `YYMMDDB##S##X`, where `X` is fabrication location.
-- The generated Sensor ID preview updates automatically when any field changes.
-- Verify is blocked with a clear message if any segment is invalid.
-- The user can still manually override the Sensor ID if needed.
-- A `Use Custom Sensor ID` checkbox is unchecked by default.
-- When `Use Custom Sensor ID` is checked, the standard builder fields are disabled and a free-text custom Sensor ID field is enabled.
-- Custom Sensor ID values are used during testing, saving, and analysis workflows.
 
 ## Project cleanup
 
