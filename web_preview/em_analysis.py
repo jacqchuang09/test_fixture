@@ -13,7 +13,8 @@ from scipy.signal import savgol_filter
 
 
 class EMAnalysis():
-    def __init__(self, path, sensor_id, sensor_type, smoother='MA_100'):
+    def __init__(self, path, sensor_id, sensor_type, smoother='MA_100',
+                 surface_area_mm2=325.0, active_runs=None, progress=None):
         """
         Initialize EB Analysis with parameters
 
@@ -22,7 +23,13 @@ class EMAnalysis():
             sensor_id: Sensor ID number
             sensor_type: Standard or Inverted
             smoother: Smoothing method for the data
+            surface_area_mm2: sensor surface area in mm^2 (converted to m^2 internally)
+            active_runs: optional list of run numbers to keep (the latest run in each
+                supersession chain); superseded/redone runs are excluded. None = all runs.
+            progress: optional callable(frac, message) reporting 0..1 pipeline progress
+                (plotting dominates the runtime, so this drives the loading bar).
         """
+        self._report = progress if callable(progress) else (lambda frac, message="": None)
         self.smoother = smoother
         self.sensor_id = sensor_id
         input_path = Path(path)
@@ -48,29 +55,43 @@ class EMAnalysis():
         self.cap_path = self.path / "CAP"
         self.fut_path = self.path / "FUT"
 
-        csv_files  = sorted(self.cap_path.glob("*.csv"))
-        xlsx_files = sorted(self.fut_path.glob("*.xlsx"))
-        if not csv_files or not xlsx_files:
+        csv_files = sorted(self.cap_path.glob("*.csv"), key=_run_sort_key)
+        # FUT may be a real FUTEK export (.xlsx) or a hardware/preview capture (.csv).
+        fut_files = sorted(self.fut_path.glob("*.xlsx"), key=_run_sort_key)
+        if not fut_files:
+            fut_files = sorted(self.fut_path.glob("*.csv"), key=_run_sort_key)
+
+        # Keep only the active (non-superseded) runs when a list is provided, so a
+        # redo that supersedes an earlier run is excluded from the analysis.
+        if active_runs:
+            active = set(active_runs)
+            csv_files = [f for f in csv_files if _run_sort_key(f)[0] in active]
+            fut_files = [f for f in fut_files if _run_sort_key(f)[0] in active]
+
+        if not csv_files or not fut_files:
             raise FileNotFoundError(
-                f"Expected CAP CSV and FUT XLSX data under {self.path}. "
-                f"Found {len(csv_files)} CAP file(s) and {len(xlsx_files)} FUT file(s)."
+                f"Expected CAP CSV and FUT data under {self.path}. "
+                f"Found {len(csv_files)} CAP file(s) and {len(fut_files)} FUT file(s)."
             )
+        # Preserve the ACTUAL run numbers (e.g. [1, 3, 4] after a redo superseded
+        # run 2) so plots and labels show the real run, not a 1..N re-index.
+        self.run_numbers = [_run_sort_key(f)[0] for f in fut_files]
         self.cap_size = len(csv_files)
-        if len(csv_files) != len(xlsx_files):
+        if len(csv_files) != len(fut_files):
             raise ValueError(
                 f"CAP/FUT file counts must match under {self.path}: "
-                f"{len(csv_files)} CAP file(s), {len(xlsx_files)} FUT file(s)."
+                f"{len(csv_files)} CAP file(s), {len(fut_files)} FUT file(s)."
             )
 
         # Load data
-        self.cap, self.fut = self._create_data(csv_files, xlsx_files)
+        self.cap, self.fut = self._create_data(csv_files, fut_files)
 
         # Pressure / sensor parameters
         self.start_force = 0    # kPa
         self.end_force   = 45   # kPa
         self.ch = 8
         self.v  = 5             # PCB board version offset
-        self.SA = 325e-6        # surface area (m²)
+        self.SA = float(surface_area_mm2) * 1e-6   # mm^2 -> m^2 (operator-set)
 
         # Sampling
         self.fs = 200           # Hz
@@ -118,6 +139,21 @@ class EMAnalysis():
         self.max_ps_numeric  = np.zeros((self.cap_size, self.ch))
         self.max_kPa_numeric = np.zeros((self.cap_size, self.ch))
         self.inf_CAP_numeric = np.zeros((self.cap_size, self.ch))
+
+        # ── Preview/simulated gate ───────────────────────────────────────────
+        # Every run must actually exceed the analysis window (45 kPa). This rejects
+        # preview/simulated captures that never reach test pressure, so the web app
+        # falls back to its lightweight preview analysis instead of running the real
+        # pipeline on non-test data.
+        peak_kpa = [
+            float(np.nanmax(self.fut[r].iloc[:, 1].values.astype(float))) / self.SA / 1000
+            for r in range(self.cap_size)
+        ]
+        if min(peak_kpa) <= self.end_force:
+            raise ValueError(
+                f"Peak pressure {min(peak_kpa):.1f} kPa does not reach the {self.end_force} kPa "
+                "analysis window; data is not a completed EM test."
+            )
 
         # ── Pipeline ─────────────────────────────────────────────────────────
         self._interp_cap()
@@ -200,22 +236,27 @@ class EMAnalysis():
     # Data loading
     # =========================================================================
 
-    def _create_data(self, csv_files, xlsx_files):
+    def _create_data(self, csv_files, fut_files):
         cap, fut = [], []
         for f in csv_files:
-            cap.append(pd.read_csv(f, usecols=range(16)))
-        for f in xlsx_files:
-            fut.append(pd.read_excel(f))
+            df = pd.read_csv(f)
+            # keep at most the first 16 columns (real layout); preview files have fewer.
+            cap.append(df.iloc[:, : min(16, df.shape[1])])
+        for f in fut_files:
+            if str(f).lower().endswith(".xlsx"):
+                fut.append(pd.read_excel(f))
+            else:
+                fut.append(pd.read_csv(f))
         return cap, fut
 
     def _correct_ch_order(self, cap):
         reordered_cap = []
-        cols = (
-            list(range(0, 5)) +
-            list(self.ch_order + self.v - 1) +
-            list(range(13, 16))
-        )
         for df in cap:
+            ncols = df.shape[1]
+            head = list(range(0, min(5, ncols)))
+            channel_block = [c for c in (self.ch_order + self.v - 1) if c < ncols]
+            tail = list(range(13, min(16, ncols)))
+            cols = head + channel_block + tail
             reordered_cap.append(df.iloc[:, cols])
         return reordered_cap
 
@@ -1000,3 +1041,166 @@ class EMAnalysis():
         pickle_to_excel(pkl_path, xlsx_path)
 
         return result
+
+
+# =============================================================================
+# Web-app integration layer
+#
+# The browser GUI (analysis.py) drives the engine through run_em_analysis and
+# renders the interactive plots from the JSON payload below, so these bridge the
+# EMAnalysis class to what the app expects.
+# =============================================================================
+
+def _run_sort_key(path):
+    # sort run files naturally: Run 1, Run 2, ... Run 10 (not lexical 1, 10, 2).
+    import re
+    match = re.search(r"(\d+)", path.stem)
+    return (int(match.group(1)) if match else 0, path.name)
+
+
+def _to_jsonable(value):
+    # convert numpy scalars/arrays (and nested lists of them) into plain JSON types,
+    # turning NaN/inf into None so the result is valid JSON.
+    if isinstance(value, np.ndarray):
+        return _to_jsonable(value.tolist())
+    if isinstance(value, (np.floating, float)):
+        v = float(value)
+        return None if (v != v or v in (float("inf"), float("-inf"))) else v
+    if isinstance(value, (np.integer,)):
+        return int(value)
+    if isinstance(value, (list, tuple)):
+        return [_to_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _to_jsonable(v) for k, v in value.items()}
+    return value
+
+
+def _plot_payload(analyzer, max_points=3000):
+    """
+    Build a JSON-safe version of the computed curves so the web UI can render the
+    same graphs the matplotlib figures show: per run/channel the smoothed P.S curve
+    (pressure vs CAP), its 1st derivative, and the inflection point, plus the synced
+    raw signals. Arrays are downsampled to ~max_points to keep the payload small.
+    """
+    import math
+
+    def _indices(n):
+        if n <= max_points:
+            return list(range(n))
+        step = math.ceil(n / max_points)
+        return list(range(0, n, step))
+
+    def _clean(value, ndigits):
+        v = float(value)
+        return None if (v != v or v in (float("inf"), float("-inf"))) else round(v, ndigits)
+
+    runs = []
+    for i in range(analyzer.cap_size):
+        x = np.asarray(analyzer.zaber_x[i], dtype=float)
+        idx = _indices(len(x))
+        pressure = [_clean(x[k], 4) for k in idx]
+
+        channels = []
+        for j in range(analyzer.ch):
+            y = np.asarray(analyzer.zaber_y[i][j], dtype=float)
+            cap = [_clean(y[k], 5) for k in idx]
+
+            d = np.asarray(analyzer.fir_dev[i][j], dtype=float)  # length len(x) - 1
+            didx = [k for k in idx if k < len(d)]
+            deriv_x = [_clean(x[k], 4) for k in didx]
+            deriv = [_clean(d[k], 6) for k in didx]
+
+            kpa = analyzer.max_kPa_numeric[i, j]
+            cap_inf = analyzer.inf_CAP_numeric[i, j]
+            ps = analyzer.max_ps_numeric[i, j]
+            infl = None
+            if np.isfinite(kpa) and np.isfinite(cap_inf):
+                infl = {"kpa": round(float(kpa), 3), "cap": round(float(cap_inf), 5), "ps": round(float(ps), 5)}
+
+            channels.append({"cap": cap, "deriv": deriv, "deriv_x": deriv_x, "infl": infl})
+
+        # synced raw signals (test_cap: time + 8 CAP, test_fut: time + pressure)
+        tc = np.asarray(analyzer.test[i][0], dtype=float)
+        tf = np.asarray(analyzer.test[i][1], dtype=float)
+        ridx = _indices(len(tc))
+        raw_time = [_clean(tc[k, 0], 4) for k in ridx]
+        raw_cap = [[_clean(tc[k, j + 1], 5) for k in ridx] for j in range(analyzer.ch)]
+        raw_pressure = [_clean(tf[k, 1], 3) for k in ridx if k < len(tf)]
+
+        runs.append({
+            "run": analyzer.run_numbers[i],
+            "pressure": pressure,
+            "channels": channels,
+            "raw": {"time": raw_time, "cap": raw_cap, "pressure": raw_pressure},
+        })
+
+    return {"channels": analyzer.ch, "runs": runs}
+
+
+def run_em_analysis(test_folder, sensor_id, sensor_type="Standard", surface_area_mm2=325.0,
+                    active_runs=None, progress=None):
+    """
+    Convenience entry point the web app calls: run the full pipeline, persist outputs,
+    and return the summary dict the GUI consumes.
+
+    Returns a dict with:
+        channel_stats: per-channel {channel, ps, kpa, cap, inf} stat blocks
+        shorted_channels: 1-based channel numbers flagged shorted in any run
+        runs: number of runs analysed
+        plots: JSON-safe curves for the interactive plots
+        result: the JSON-safe full result dictionary
+
+    progress: optional callable(frac, message) reporting 0..1 pipeline progress.
+    """
+    report = progress if callable(progress) else (lambda frac, message="": None)
+    analyzer = EMAnalysis(test_folder, sensor_id, sensor_type,
+                          surface_area_mm2=surface_area_mm2,
+                          active_runs=active_runs, progress=progress)
+    report(0.93, "Saving results…")
+    result = analyzer.save_data()
+    report(0.98, "Packaging plot data…")
+
+    def _col(name):
+        return np.asarray(result[name], dtype=float)
+
+    max_ps = _col("max_ps")
+    max_kpa = _col("max_kpa")
+    max_cap = _col("max_cap")
+    inf_cap = _col("inf_cap")
+
+    def _stat_block(matrix, channel):
+        column = matrix[:, channel]
+        finite = column[np.isfinite(column)]
+        if finite.size == 0:
+            return {"mean": 0.0, "std": 0.0, "cov": 0.0, "min": 0.0, "max": 0.0}
+        mean = float(np.mean(finite))
+        std = float(np.std(finite, ddof=1)) if finite.size > 1 else 0.0
+        cov = (std / abs(mean) * 100) if abs(mean) > 1e-9 else 0.0
+        return {"mean": mean, "std": std, "cov": cov, "min": float(np.min(finite)), "max": float(np.max(finite))}
+
+    channel_stats = []
+    for channel in range(analyzer.ch):
+        channel_stats.append({
+            "channel": channel + 1,
+            "ps": _stat_block(max_ps, channel),
+            "kpa": _stat_block(max_kpa, channel),
+            "cap": _stat_block(max_cap, channel),
+            "inf": _stat_block(inf_cap, channel),
+        })
+
+    # any channel flagged shorted in any run (union), reported 1-based
+    shorted = set()
+    for arr in (analyzer.shorted_ch_by_run or []):
+        for c in np.asarray(arr).ravel().tolist():
+            shorted.add(int(c) + 1)
+    shorted_channels = sorted(shorted)
+
+    json_safe_result = {key: _to_jsonable(value) for key, value in result.items()}
+
+    return {
+        "channel_stats": channel_stats,
+        "shorted_channels": shorted_channels,
+        "runs": analyzer.cap_size,
+        "plots": _plot_payload(analyzer),
+        "result": json_safe_result,
+    }
