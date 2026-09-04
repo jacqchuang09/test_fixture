@@ -1,8 +1,7 @@
 """
 Real EM (Eco Blox) analysis engine.
 
-This is a faithful adaptation of Emilio's zaber-python ``EMAnalysis`` class. It
-keeps his scientific pipeline intact -- interpolate CAP/FUT to 200 Hz, sync the
+Interpolate CAP/FUT to 200 Hz, sync the
 two streams on the release peak, smooth the pressure/sensitivity (P.S) curve,
 take the 1st derivative, and locate the inflection point (max slope) -- and
 produces the same set of plots and result statistics the sensor team expects:
