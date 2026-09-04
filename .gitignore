@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments (do not commit — interpreter lives in system python3)
+.venv/
+venv/
+env/
+
+# PyInstaller build artifacts
+/build/
+/dist/
+web_preview/build/
+web_preview/dist/
+
+# OS cruft
+.DS_Store
+
+# Test run outputs (sensor folders created by real/simulated runs)
+# keep bundled demo data under web_preview/sample_data/, ignore stray run folders
+/web_preview/[0-9]*/
+
+# Claude Code local config
+.claude/
+
+# Node deps for the docx/doc generators
+node_modules/
+
+# Zaber characterization tool output (generated on the rig)
+/zaber_characterization/
+
+# Stray test-run outputs that landed in the repo root
+/Fatigue_Data.xlsx
+/Fatigue_Stats.xlsx
+/Fatigue_Force_vs_Time.png
+/test_meta.json

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fatigue Testing Window - Preview</title>
+<!--
+  Standalone preview of the expanded Fatigue Testing Window. This is a self
+  contained copy of the real GUI's fatigue window: it has no backend and moves
+  no hardware, so it can be opened straight from a browser (file://) to show the
+  waveform controls. The waveform math here mirrors cyclicalShape() in
+  web_preview/js/fatigue.js and target_force() in web_preview/run_engine.py, so
+  the shapes you see are exactly what the actuator is driven to do on the rig.
+-->
+<style>
+  :root {
+    --bg: #f5f7fb;
+    --panel: #ffffff;
+    --line: #d7dee9;
+    --line-strong: #c7d1df;
+    --text: #161d29;
+    --muted: #697790;
+    --blue: #3f73e6;
+    --blue-dark: #315ec5;
+    --green: #3f8b42;
+    --green-dark: #347438;
+    --red: #c5423c;
+    --red-dark: #a93631;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --font: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { padding: 28px 24px 56px; display: flex; justify-content: center; }
+
+  /* the dialog shell, matching .em-dialog / .modal-head / .modal-body */
+  .dialog {
+    width: min(1180px, 100%);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.16);
+    overflow: hidden;
+  }
+  .modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  .modal-head h2 { margin: 0; font-size: 24px; font-weight: 800; }
+  .preview-tag {
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
+    padding: 5px 12px;
+  }
+  .modal-body { padding: 24px; }
+
+  /* state pill */
+  .cyclical-state-row { margin-bottom: 16px; }
+  .state-pill {
+    display: flex;
+    width: fit-content;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-radius: 999px;
+    font-size: 15px;
+    background: #eef4ff;
+    border: 1px solid #c7dbff;
+    color: #17426c;
+  }
+  .state-pill .state-tag { font-weight: 900; letter-spacing: 0.03em; }
+  .state-pill .state-message { font-weight: 500; }
+  .state-pill.running { background: #ecf7ee; border-color: #bfe2c4; color: #1f5d2a; }
+  .state-pill.error { background: #fdeceb; border-color: #f3c3bf; color: #8c2b26; }
+
+  /* two column layout: controls + graph */
+  .cyclical-layout {
+    display: grid;
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    gap: 16px;
+  }
+  .cyclical-controls { display: grid; gap: 12px; align-content: start; }
+  .form-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+
+  label { display: block; }
+  .sensor-header { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; }
+  .label-text { font-size: 15px; font-weight: 600; }
+  .sensor-help {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid var(--line-strong);
+    background: #fbfcff;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: help;
+  }
+  input, select {
+    width: 100%;
+    height: 48px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: #fff;
+    color: #05070c;
+    font: inherit;
+    font-size: 18px;
+    padding: 0 14px;
+    outline: none;
+  }
+  input:focus-visible, select:focus-visible { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(63, 115, 230, 0.18); }
+
+  .suffix-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .suffix-field input { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  .suffix {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 48px;
+    min-width: 56px;
+    padding: 0 12px;
+    border: 1px solid var(--line-strong);
+    border-left: none;
+    border-radius: 0 7px 7px 0;
+    background: #f1f4f9;
+    color: var(--muted);
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .alert {
+    background: #e8f2ff;
+    color: #17426c;
+    border: 1px solid #b9d8ff;
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 14px;
+  }
+
+  .mini-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  button {
+    min-height: 48px;
+    border: 1px solid var(--line-strong);
+    border-radius: 7px;
+    background: #fbfcff;
+    color: var(--text);
+    font: inherit;
+    font-size: 18px;
+    font-weight: 800;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .success { background: var(--green); border-color: var(--green); color: #fff; }
+  .success:hover:not(:disabled) { background: var(--green-dark); }
+  .pause-button { color: #e11955; border-color: var(--red); background: #fff; }
+  .pause-button:hover:not(:disabled) { background: #ffe8ee; }
+
+  /* graph */
+  .cyclical-graph-column { min-width: 0; }
+  .graph-wrap {
+    position: relative;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    height: 100%;
+    min-height: 460px;
+    overflow: hidden;
+  }
+  .graph-wrap svg { display: block; width: 100%; height: 100%; }
+
+  .foot {
+    max-width: 1180px;
+    margin: 14px auto 0;
+    color: var(--muted);
+    font-size: 12.5px;
+    text-align: center;
+  }
+
+  @media (max-width: 820px) {
+    .cyclical-layout { grid-template-columns: 1fr; }
+    .graph-wrap { min-height: 320px; }
+  }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="dialog">
+      <div class="modal-head">
+        <h2>Fatigue Testing Window</h2>
+        <span class="preview-tag">Preview - no hardware</span>
+      </div>
+      <div class="modal-body">
+        <div class="cyclical-state-row">
+          <div id="cyclicalState" class="state-pill">
+            <span class="state-tag">READY:</span>
+            <span class="state-message">cyclical fatigue test ready.</span>
+          </div>
+        </div>
+
+        <div class="cyclical-layout">
+          <div class="cyclical-controls">
+            <div class="form-grid">
+              <label>
+                <span class="sensor-header">
+                  <span class="label-text">Waveform Type</span>
+                  <span class="sensor-help" title="Sine is a smooth press/release. Square holds at each bound. Triangle ramps up and down at a steady rate. Sawtooth ramps up then releases fast. Blood Pressure mimics an arterial pulse.">i</span>
+                </span>
+                <select id="waveformType">
+                  <option value="Sine" selected>Sine</option>
+                  <option value="Square">Square</option>
+                  <option value="Triangle">Triangle</option>
+                  <option value="Sawtooth">Sawtooth</option>
+                  <option value="Blood Pressure">Blood Pressure</option>
+                </select>
+              </label>
+
+              <label>
+                <span class="sensor-header">
+                  <span class="label-text">Lower Force Bound</span>
+                  <span class="sensor-help" title="Lowest force target in each fatigue cycle.">i</span>
+                </span>
+                <span class="suffix-field">
+                  <input id="lowerForce" type="number" min="0" max="32" step="1" value="1" />
+                  <span class="suffix">N</span>
+                </span>
+              </label>
+
+              <label>
+                <span class="sensor-header">
+                  <span class="label-text">Upper Force Bound</span>
+                  <span class="sensor-help" title="Highest force target in each fatigue cycle.">i</span>
+                </span>
+                <span class="suffix-field">
+                  <input id="upperForce" type="number" min="0" max="32" step="1" value="20" />
+                  <span class="suffix">N</span>
+                </span>
+              </label>
+
+              <label>
+                <span class="sensor-header">
+                  <span class="label-text">Frequency</span>
+                  <span class="sensor-help" title="Number of fatigue cycles per second.">i</span>
+                </span>
+                <span class="suffix-field">
+                  <input id="frequency" type="number" min="1" max="5" step="1" value="1" />
+                  <span class="suffix">Hz</span>
+                </span>
+              </label>
+
+              <label>
+                <span class="sensor-header">
+                  <span class="label-text">Number of Cycles</span>
+                  <span class="sensor-help" title="Total fatigue cycles to run. Default is 28800 cycles.">i</span>
+                </span>
+                <input id="cycleCount" type="number" min="1" step="1" value="28800" />
+              </label>
+            </div>
+
+            <div id="estimate" class="alert">This test will take approximately 8 h.</div>
+
+            <div class="mini-row">
+              <button id="startButton" class="success">&#9654; Start</button>
+              <button id="stopButton" class="pause-button" disabled>&#9632; Stop</button>
+            </div>
+          </div>
+
+          <div class="cyclical-graph-column">
+            <div class="graph-wrap">
+              <svg id="cyclicalGraph" viewBox="0 0 960 340" role="img" aria-label="Fatigue force waveform preview"></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <p class="foot">Standalone preview of the real Fatigue Testing Window. The waveform math matches the actuator drive in the app, but nothing here connects to or moves hardware.</p>
+
+<script>
+  // ---- waveform shapes (mirror of fatigue.js cyclicalShape / run_engine target_force)
+  function cyclicalShape(type, phase) {
+    switch (type) {
+      case "Square":
+        return phase < 0.5 ? 1 : 0;
+      case "Triangle":
+        return phase < 0.5 ? phase / 0.5 : (1 - phase) / 0.5;
+      case "Sawtooth":
+        return phase;
+      case "Blood Pressure": {
+        const systolic = Math.exp(-Math.pow((phase - 0.18) / 0.085, 2));
+        const dicrotic = 0.45 * Math.exp(-Math.pow((phase - 0.42) / 0.13, 2));
+        return (systolic + dicrotic) / 1.015;
+      }
+      case "Sine":
+      default:
+        return 0.5 - 0.5 * Math.cos(2 * Math.PI * phase);
+    }
+  }
+  function forceValue(type, time, low, high, freq) {
+    return low + (high - low) * cyclicalShape(type, (time * freq) % 1);
+  }
+
+  // ---- input helpers
+  const $ = (id) => document.getElementById(id);
+  function bounds() {
+    const low = Math.max(0, Math.min(32, Number($("lowerForce").value || 0)));
+    const high = Math.max(0, Math.min(32, Number($("upperForce").value || 0)));
+    return { low, high, valid: high > low };
+  }
+  function freqValue() { return Math.max(0.01, Number($("frequency").value || 1)); }
+  function cycleCount() { return Math.max(1, Math.floor(Number($("cycleCount").value || 1))); }
+
+  function formatDuration(totalSeconds) {
+    const s = Math.max(0, Math.round(totalSeconds));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    const parts = [];
+    if (h) parts.push(h + " h");
+    if (m) parts.push(m + " min");
+    if (!h && !m) parts.push(sec + " s");
+    else if (!h && sec) parts.push(sec + " s");
+    return parts.join(" ");
+  }
+
+  function setState(tag, message, cls) {
+    const pill = $("cyclicalState");
+    pill.className = "state-pill" + (cls ? " " + cls : "");
+    pill.querySelector(".state-tag").textContent = tag + ":";
+    pill.querySelector(".state-message").textContent = message;
+  }
+
+  // ---- SVG drawing (matches drawWaveformSvg look in shared.js)
+  const W = 960, H = 340, padLeft = 92, padBottom = 52, padTop = 58, padRight = 24;
+  const plotW = W - padLeft - padRight, plotH = H - padTop - padBottom;
+
+  function draw(points, yMin, yMax, xMax, playhead) {
+    const ySpan = Math.max(1, yMax - yMin);
+    const toX = (v) => padLeft + (v / Math.max(1, xMax)) * plotW;
+    const toY = (v) => H - padBottom - ((v - yMin) / ySpan) * plotH;
+    const zeroY = toY(0);
+    const axisY = H - padBottom;
+
+    // x ticks at whole seconds
+    let ticks = "";
+    const step = xMax > 12 ? 2 : 1;
+    for (let s = 0; s <= xMax + 0.001; s += step) {
+      const x = toX(s);
+      ticks += `<line x1="${x.toFixed(1)}" y1="${axisY}" x2="${x.toFixed(1)}" y2="${axisY + 5}" stroke="#c7d1df" stroke-width="1"></line>`;
+      ticks += `<text x="${x.toFixed(1)}" y="${axisY + 20}" text-anchor="middle" fill="#697790" font-size="12" font-family="${getComputedStyle(document.body).fontFamily}">${s}</text>`;
+    }
+
+    const path = points.map((p, i) => `${i === 0 ? "M" : "L"}${toX(p.time).toFixed(2)},${toY(p.force).toFixed(2)}`).join(" ");
+
+    let marker = "";
+    if (playhead) {
+      const px = toX(playhead.time), py = toY(playhead.force);
+      marker = `
+        <line x1="${px.toFixed(1)}" y1="${padTop}" x2="${px.toFixed(1)}" y2="${axisY}" stroke="#9db4e8" stroke-width="1" stroke-dasharray="4 4"></line>
+        <circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="6" fill="#3f73e6"></circle>`;
+    }
+
+    const ff = getComputedStyle(document.body).fontFamily;
+    $("cyclicalGraph").innerHTML = `
+      <rect x="0" y="0" width="${W}" height="${H}" fill="#ffffff"></rect>
+      <path d="M${padLeft},${padTop} L${padLeft},${axisY} L${W - padRight},${axisY}" fill="none" stroke="#c7d1df" stroke-width="1"></path>
+      ${ticks}
+      <line x1="${padLeft}" y1="${zeroY.toFixed(2)}" x2="${W - padRight}" y2="${zeroY.toFixed(2)}" stroke="#e2e8f0" stroke-width="1"></line>
+      <text x="${padLeft}" y="22" fill="#697790" font-size="15" font-family="${ff}">Force (N)</text>
+      <text x="${(W / 2 - 30).toFixed(0)}" y="${H - 12}" fill="#697790" font-size="15" font-family="${ff}">Time (s)</text>
+      <text x="${padLeft - 12}" y="${(axisY + 5).toFixed(0)}" text-anchor="end" fill="#697790" font-size="13" font-family="${ff}">${yMin.toFixed(1)}</text>
+      <text x="${padLeft - 12}" y="${(padTop + 5).toFixed(0)}" text-anchor="end" fill="#697790" font-size="13" font-family="${ff}">${yMax.toFixed(1)}</text>
+      <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+      ${marker}`;
+  }
+
+  // ---- idle preview: show ~5 cycles of the selected shape
+  let playing = false;
+  function redrawIdle() {
+    const type = $("waveformType").value;
+    const { low, high, valid } = bounds();
+    const freq = freqValue();
+    const period = 1 / freq;
+    const duration = Math.max(5, period * 5);
+    const pts = Array.from({ length: 240 }, (_, i) => {
+      const t = (i / 239) * duration;
+      return { time: t, force: forceValue(type, t, low, high, freq) };
+    });
+    draw(pts, Math.min(0, low), Math.max(1, high), duration, null);
+
+    $("estimate").textContent = "This test will take approximately " + formatDuration(cycleCount() / freq) + ".";
+    if (!playing) {
+      if (!valid) setState("ERROR", "upper force bound must be higher than lower force bound.", "error");
+      else setState("READY", type.toLowerCase() + " fatigue cycle configured.");
+    }
+    $("startButton").disabled = playing || !valid;
+  }
+
+  // ---- play: scroll a live window with a playhead, looping for demo
+  let rafId = null, t0 = 0;
+  const WINDOW_S = 5; // seconds of waveform on screen while running
+
+  function tick(now) {
+    if (!playing) return;
+    const type = $("waveformType").value;
+    const { low, high } = bounds();
+    const freq = freqValue();
+    const elapsed = (now - t0) / 1000;
+    const start = Math.max(0, elapsed - WINDOW_S);
+
+    const pts = [];
+    const N = 240;
+    for (let i = 0; i <= N; i++) {
+      const t = start + (i / N) * WINDOW_S;
+      pts.push({ time: t, force: forceValue(type, t, low, high, freq) });
+    }
+    const head = { time: elapsed, force: forceValue(type, elapsed, low, high, freq) };
+    // re-base the window to 0 on the x axis so it scrolls
+    const based = pts.map((p) => ({ time: p.time - start, force: p.force }));
+    const headBased = { time: head.time - start, force: head.force };
+    draw(based, Math.min(0, low), Math.max(1, high), WINDOW_S, headBased);
+
+    const cycle = Math.min(cycleCount(), Math.floor(elapsed * freq) + 1);
+    setState("RUNNING", "cycle " + cycle + " / " + cycleCount() + " - force " + head.force.toFixed(2) + " N.", "running");
+    rafId = requestAnimationFrame(tick);
+  }
+
+  function start() {
+    const { valid } = bounds();
+    if (!valid) { setState("ERROR", "upper force bound must be higher than lower force bound.", "error"); return; }
+    playing = true;
+    t0 = performance.now();
+    $("startButton").disabled = true;
+    $("stopButton").disabled = false;
+    [ "waveformType", "lowerForce", "upperForce", "frequency", "cycleCount" ].forEach((id) => $(id).disabled = true);
+    rafId = requestAnimationFrame(tick);
+  }
+  function stop() {
+    playing = false;
+    if (rafId) cancelAnimationFrame(rafId);
+    rafId = null;
+    $("stopButton").disabled = true;
+    [ "waveformType", "lowerForce", "upperForce", "frequency", "cycleCount" ].forEach((id) => $(id).disabled = false);
+    setState("STOPPED", "fatigue test stopped. ready to run again.");
+    redrawIdle();
+  }
+
+  // ---- wire up
+  [ "waveformType", "lowerForce", "upperForce", "frequency", "cycleCount" ].forEach((id) =>
+    $(id).addEventListener("input", redrawIdle));
+  $("startButton").addEventListener("click", start);
+  $("stopButton").addEventListener("click", stop);
+  redrawIdle();
+</script>
+</body>
+</html>

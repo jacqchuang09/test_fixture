@@ -1,0 +1,541 @@
+/*
+ * shear.js - Shear test window.
+ *
+ * Owns the shear test modal and the shear analysis modal. Runs the live
+ * shear-force capture and flags channels that cross the delta/short threshold.
+ *
+ * Structure:
+ *   - Settings / time controls: shearSettings, updateShearTimeControls.
+ *   - Capture: resetShearGraph, startShearGraph, pauseShearGraph,
+ *     finishShear, drawShearGraph (reads the real load cell via the backend).
+ *   - Analysis: performShearAnalysis, shearChannelPlotSvg,
+ *     shearDetectionTable, populateShearAnalysis, setShearState.
+ *
+ * Reads shared.js globals (shearData, latestShearAnalysisData, shearTimer)
+ * and shared helpers (callApi, runAnalysisProgress, formatShortedChannels...).
+ */
+
+
+      function setShearState(state, message) {
+        setStatePill(shearStateEl, state, message);
+        document.getElementById("shearMessage").textContent = "";
+      }
+
+      function shearSettings() {
+        const yMin = Number(document.getElementById("yAxisMin").value || 0);
+        const yLimit = Number(document.getElementById("yAxisLimit").value || 5);
+        return {
+          seconds: Math.max(1, Number(document.getElementById("secondsToDisplay").value || 30)),
+          yMin,
+          yLimit: Math.max(yMin + 1, yLimit),
+          showMarkers: document.getElementById("showMarkers").checked,
+          cumulativeTime: document.getElementById("cumulativeTime").checked,
+        };
+      }
+
+      function updateShearTimeControls() {
+        document.getElementById("secondsToDisplay").disabled = document.getElementById("cumulativeTime").checked;
+      }
+
+      // Target-band flag beside the shear status pill: green while the live load-cell
+      // force is within 1.4-1.6 N (inclusive), gray otherwise.
+      function updateShearForceFlag(force) {
+        const el = document.getElementById("shearForceFlag");
+        if (!el) return;
+        el.classList.toggle("active", Number.isFinite(force) && force >= 1.4 && force <= 1.6);
+      }
+
+      function resetShearGraph() {
+        clearInterval(shearTimer);
+        clearTimeout(shearAnalysisUnlockTimer);
+        shearTimer = null;
+        shearAnalysisUnlockTimer = null;
+        shearData = [];
+        latestShearAnalysisData = [];
+        shearStartTime = null;
+        document.getElementById("shearStartButton").disabled = false;
+        document.getElementById("shearPauseButton").disabled = true;
+        document.getElementById("shearAnalysisButton").disabled = true;
+        updateShearForceFlag(0);   // back to gray when not live
+        drawShearGraph();
+        setShearState("READY", "click Start to begin live shear graph.");
+      }
+
+      // Close the Shear Testing Window. If a recording is active, warn first (1.7.10):
+      // closing discards the in-progress capture. Confirm stops the read loop and the
+      // backend; Cancel leaves the window open and recording running.
+      async function closeShearTestWindow() {
+        if (shearTimer) {
+          const ok = await promptConfirm(
+            "A recording is in progress. Closing will discard the current capture. Continue?",
+            { title: "Recording in progress", confirmLabel: "Discard & Close", cancelLabel: "Cancel" });
+          if (!ok) return;
+          clearInterval(shearTimer);
+          shearTimer = null;
+          await callApi("/api/stop", {});
+        }
+        stopReconnectWatch();
+        resetGraphZoom("shearGraph");     // clear any scroll-zoom so the next window opens normal
+        // Restore the graph axis controls to defaults so the next shear window opens normal.
+        resetGraphAxisSettings(
+          { seconds: "secondsToDisplay", yMin: "yAxisMin", yLimit: "yAxisLimit", showMarkers: "showMarkers", cumulative: "cumulativeTime" },
+          { seconds: 30, yMin: 0, yLimit: 5, showMarkers: false, cumulative: true });
+        shearTestModal.close();
+      }
+
+      // Live shear capture reads the REAL FUTEK load cell on the backend (no actuator
+      // motion - the operator applies shear by hand). It starts a backend read loop and
+      // polls /api/run-status for the live force, rebuilding the graph from the dense
+      // 100 Hz trace the backend streams - just like the fatigue test.
+      async function startShearGraph() {
+        shearData = [];
+        latestShearAnalysisData = [];
+        shearStartTime = performance.now();
+        clearInterval(shearTimer);
+        clearTimeout(shearAnalysisUnlockTimer);
+        document.getElementById("shearStartButton").disabled = true;
+        document.getElementById("shearPauseButton").disabled = false;
+        document.getElementById("shearAnalysisButton").disabled = true;
+        document.getElementById("shearTestCloseButton").disabled = true;
+        // The poll shows WAITING TO START only if the load cell is still initializing;
+        // when it is already open the capture starts immediately (no wait-pill blink).
+        drawShearGraph();
+        console.log("[shear] START - requesting live load-cell read from backend");
+        const result = await callApi("/api/shear-start", {});
+        console.log("[shear] /api/shear-start ->", result);
+        if (!result || !result.ok) {
+          setShearState("ERROR", (result && result.message) || "could not start the shear test.");
+          document.getElementById("shearStartButton").disabled = false;
+          document.getElementById("shearPauseButton").disabled = true;
+          document.getElementById("shearTestCloseButton").disabled = false;
+          return;
+        }
+        let lastStatus = "";
+        shearTimer = setInterval(async () => {
+          const status = await callApi("/api/run-status");
+          if (!status || !status.ok) return;
+          if (status.status !== lastStatus) {
+            console.log(`[shear] status -> ${status.status}  force=${Number(status.force || 0).toFixed(3)} N  simulated=${status.simulated}`);
+            lastStatus = status.status;
+          }
+          if (status.status === "waiting") {
+            setShearState("WAITING TO START", "initializing load cell - please wait…");
+            return;
+          }
+          if (Array.isArray(status.trace) && status.trace.length) {
+            // The backend streams only a rolling window (to keep the live payload small),
+            // so ACCUMULATE the new samples into the full series instead of replacing it -
+            // otherwise older data scrolls out of the window and is lost from both the graph
+            // and the analysis. Samples are time-ordered, so append anything newer than the
+            // last one we already have.
+            const lastT = shearData.length ? shearData[shearData.length - 1].time : -Infinity;
+            for (const point of status.trace) {
+              if (point[0] > lastT) shearData.push({ time: point[0], force: point[1] });
+            }
+            latestShearAnalysisData = shearData.slice();
+            drawShearGraph();
+          }
+          if (status.status === "running") {
+            const f = Number(status.force || 0);
+            setShearState("RUNNING", `live shear force: ${f.toFixed(3)} N.`);
+            updateShearForceFlag(f);
+          } else if (status.status === "stopped" || status.status === "error") {
+            clearInterval(shearTimer);
+            shearTimer = null;
+            finishShear(status);
+          }
+        }, 100);
+      }
+
+      async function pauseShearGraph() {
+        // ask the backend to stop reading; the poll sees "stopped" (with the full
+        // series) on the next tick and calls finishShear.
+        console.log("[shear] STOP clicked");
+        document.getElementById("shearPauseButton").disabled = true;
+        await callApi("/api/stop", {});
+      }
+
+      function finishShear(status) {
+        clearTimeout(shearAnalysisUnlockTimer);
+        shearAnalysisUnlockTimer = null;
+        // the backend sends the FULL captured series on stop, so analysis has every
+        // reading (not just the rolling live window).
+        if (Array.isArray(status.trace) && status.trace.length) {
+          latestShearAnalysisData = status.trace.map((point) => ({ time: point[0], force: point[1] }));
+        }
+        shearData = [];
+        shearStartTime = null;
+        document.getElementById("shearStartButton").disabled = false;
+        document.getElementById("shearPauseButton").disabled = true;
+        document.getElementById("shearAnalysisButton").disabled = latestShearAnalysisData.length === 0;
+        document.getElementById("shearTestCloseButton").disabled = false;
+        updateShearForceFlag(0);   // live reading stopped - back to gray
+        updateShearTimeControls();
+        drawShearGraph();
+        if (status.status === "error") {
+          setShearState("ERROR", status.message || "shear test error.");
+          // a shear-test disconnect is always the load cell (the shear test does not
+          // drive the actuator): show the load-cell dialog + banner.
+          if (status.disconnect) handleDisconnect(status);
+        } else {
+          setShearState("STOPPED", `shear test stopped. ${latestShearAnalysisData.length} samples captured. click Start to begin again.`);
+        }
+        console.log(`[shear] DONE - ${latestShearAnalysisData.length} samples captured`);
+      }
+
+      function drawShearGraph() {
+        const graph = document.getElementById("shearGraph");
+        updateShearTimeControls();
+        const settings = shearSettings();
+        const width = 960;
+        const height = 340;
+        const padLeft = 92;
+        const padBottom = 52;
+        const padTop = 58;
+        const padRight = 24;
+        const latest = shearData.length ? shearData[shearData.length - 1].time : 0;
+        const startTime = settings.cumulativeTime ? 0 : Math.max(0, latest - settings.seconds);
+        const timeSpan = settings.cumulativeTime ? Math.max(1, latest - startTime, 5) : Math.max(1, settings.seconds);
+        // Default view from the settings controls; scroll the wheel to zoom the data
+        // (graphViewRange returns the zoomed range), with the axis frame staying in place.
+        // Bounds are the full generated run, so zoom/pan can never go past what exists.
+        const bounds = { xMin: 0, xMax: Math.max(startTime + timeSpan, latest, 5), yMin: settings.yMin, yMax: settings.yLimit };
+        const view = graphViewRange("shearGraph", { xMin: startTime, xMax: startTime + timeSpan, yMin: settings.yMin, yMax: settings.yLimit }, bounds);
+        const data = shearData.length ? shearData : [{ time: startTime, force: settings.yMin }];
+        const plotWidth = width - padLeft - padRight;
+        const plotHeight = height - padTop - padBottom;
+        const xSpan = Math.max(1e-6, view.xMax - view.xMin);
+        const ySpan = Math.max(1e-6, view.yMax - view.yMin);
+        const toX = (time) => padLeft + ((time - view.xMin) / xSpan) * plotWidth;
+        const toY = (force) => height - padBottom - ((force - view.yMin) / ySpan) * plotHeight;
+        const axisY = height - padBottom;
+        const xTicks = xAxisTicks(view.xMin, view.xMax, toX, axisY, "s");
+        const yTickCount = 5;
+        const yTicks = Array.from({ length: yTickCount + 1 }, (_, index) => {
+          const value = view.yMin + (ySpan * index) / yTickCount;
+          const y = toY(value);
+          return `
+            <line x1="${padLeft - 5}" y1="${y.toFixed(2)}" x2="${padLeft}" y2="${y.toFixed(2)}" stroke="#c7d1df" stroke-width="1"></line>
+            <line x1="${padLeft}" y1="${y.toFixed(2)}" x2="${width - padRight}" y2="${y.toFixed(2)}" stroke="#edf2f7" stroke-width="1"></line>
+            <text x="${padLeft - 12}" y="${(y + 4).toFixed(2)}" text-anchor="end" fill="#697790" font-size="12" font-family="Inter, sans-serif">${value.toFixed(Math.abs(value) >= 10 ? 0 : 1)}</text>
+          `;
+        }).join("");
+        const path = data.map((point, index) => {
+          const command = index === 0 ? "M" : "L";
+          return `${command}${toX(point.time).toFixed(2)},${toY(point.force).toFixed(2)}`;
+        }).join(" ");
+        // a dot at every sample (the load cell is read at 100 Hz).
+        const markers = settings.showMarkers
+          ? data.map((point) => `<circle cx="${toX(point.time).toFixed(2)}" cy="${toY(point.force).toFixed(2)}" r="2" fill="#3f8b42"></circle>`).join("")
+          : "";
+        setGraphHoverPoints("shearGraph", data.map((point) => ({
+          x: toX(point.time),
+          y: toY(point.force),
+          label: `Time: ${point.time.toFixed(3)} s<br>Force: ${point.force.toFixed(3)} N`,
+        })));
+
+        graph.innerHTML = `
+          <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>
+          <path d="M${padLeft},${padTop} L${padLeft},${height - padBottom} L${width - padRight},${height - padBottom}" fill="none" stroke="#c7d1df" stroke-width="1"></path>
+          ${yTicks}
+          ${xTicks}
+          <text x="${padLeft}" y="20" fill="#697790" font-size="15" font-family="Inter, sans-serif">Force (N)</text>
+          <text x="${width / 2 - 75}" y="${height - 12}" fill="#697790" font-size="15" font-family="Inter, sans-serif">Time Elapsed (seconds)</text>
+          <clipPath id="shearGraph-clip"><rect x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}"></rect></clipPath>
+          <g clip-path="url(#shearGraph-clip)">
+            <path d="${path}" fill="none" stroke="#3f73e6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+            ${markers}
+          </g>
+        `;
+        registerZoomGraph("shearGraph", drawShearGraph, { left: padLeft, right: padRight, top: padTop, bottom: padBottom });
+      }
+
+      async function performShearAnalysis() {
+        clearInterval(shearTimer);
+        clearTimeout(shearAnalysisUnlockTimer);
+        shearTimer = null;
+        shearAnalysisUnlockTimer = null;
+        if (shearData.length) {
+          latestShearAnalysisData = shearData.slice();
+        }
+        document.getElementById("shearAnalysisButton").disabled = true;
+        document.getElementById("shearStartButton").disabled = false;
+        document.getElementById("shearPauseButton").disabled = true;
+        document.getElementById("shearTestCloseButton").disabled = false;
+        updateShearTimeControls();
+        setShearState("ANALYSIS", "analysis started. live plotting stopped.");
+        const result = await runAnalysisProgress("Generating shear analysis outputs...", () => callApi("/api/perform-analysis", {
+          shear_readings: latestShearAnalysisData,
+        }));
+        document.getElementById("shearAnalysisButton").disabled = false;
+        // missing capacitance (or other failure): show the message and stop, rather
+        // than opening an empty analysis window. The operator drops the CAP file(s)
+        // into the CAP/ folder and clicks Perform Analysis again.
+        if (!result || !result.ok) {
+          const msg = (result && result.message) || "Shear analysis could not run.";
+          setShearState("ERROR", msg);
+          showErrorDialog(msg, "Capacitance data needed");
+          return;
+        }
+        setShearState("ANALYSIS", result.message || "shear analysis outputs saved.");
+        populateShearAnalysis(result.analysis || null);
+        shearAnalysisModal.showModal();
+      }
+
+      function shearChannelPlotSvg(readings) {
+        const width = 1120;
+        const channelHeight = 44;
+        const forceHeight = 54;
+        const gap = 7;
+        const padLeft = 54;
+        const padRight = 58;
+        const padTop = 18;
+        const padBottom = 32;
+        const height = padTop + (channelHeight + gap) * 8 + forceHeight + padBottom;
+        const plotWidth = width - padLeft - padRight;
+        const duration = Math.max(1, readings[readings.length - 1].time - readings[0].time, 5);
+        const startTime = readings[0].time;
+        const toX = (time) => padLeft + ((time - startTime) / duration) * plotWidth;
+        const timeTicks = xAxisTicks(0, duration, (time) => padLeft + (time / duration) * plotWidth, height - padBottom, "s");
+        const channelPlots = Array.from({ length: 8 }, (_, channelIndex) => {
+          const yTop = padTop + channelIndex * (channelHeight + gap);
+          const baseline = 22 + (8 - channelIndex) * 0.55;
+          const capValues = readings.map((point, pointIndex) => {
+            const pulse = Math.max(0, point.force) * (0.13 + channelIndex * 0.015);
+            const ripple = Math.sin(point.time * (0.8 + channelIndex * 0.09)) * 0.18;
+            const burst = pointIndex % (42 + channelIndex * 3) < 8 ? point.force * 0.08 : 0;
+            return baseline + pulse + ripple + burst;
+          });
+          const minCap = Math.min(...capValues, baseline - 0.5);
+          const maxCap = Math.max(...capValues, baseline + 2);
+          const span = Math.max(1, maxCap - minCap);
+          const toY = (value) => yTop + channelHeight - 10 - ((value - minCap) / span) * (channelHeight - 18);
+          const path = readings.map((point, index) => {
+            const command = index === 0 ? "M" : "L";
+            return `${command}${toX(point.time).toFixed(2)},${toY(capValues[index]).toFixed(2)}`;
+          }).join(" ");
+          return `
+            <rect x="${padLeft}" y="${yTop}" width="${plotWidth}" height="${channelHeight}" fill="#ffffff" stroke="#d7dee9"></rect>
+            <text x="${width / 2}" y="${yTop + 13}" text-anchor="middle" fill="#20242c" font-size="12" font-family="Inter, sans-serif">CH ${channelIndex + 1}</text>
+            <text x="${padLeft - 18}" y="${yTop + channelHeight / 2}" text-anchor="middle" transform="rotate(-90 ${padLeft - 18} ${yTop + channelHeight / 2})" fill="#4f86c6" font-size="10" font-family="Inter, sans-serif">CAP (pF)</text>
+            <text x="${width - 20}" y="${yTop + channelHeight / 2}" text-anchor="middle" transform="rotate(-90 ${width - 20} ${yTop + channelHeight / 2})" fill="#ff8a3d" font-size="10" font-family="Inter, sans-serif">ΔCAP (pF)</text>
+            <line x1="${padLeft}" y1="${yTop + channelHeight - 10}" x2="${width - padRight}" y2="${yTop + channelHeight - 10}" stroke="#edf2f7"></line>
+            <path d="${path}" fill="none" stroke="#3f7fb8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+          `;
+        }).join("");
+        const forceTop = padTop + 8 * (channelHeight + gap);
+        const forceMax = Math.max(5, ...readings.map((point) => point.force));
+        const forceToY = (force) => forceTop + forceHeight - 10 - (force / forceMax) * (forceHeight - 18);
+        const forcePath = readings.map((point, index) => {
+          const command = index === 0 ? "M" : "L";
+          return `${command}${toX(point.time).toFixed(2)},${forceToY(point.force).toFixed(2)}`;
+        }).join(" ");
+        return `
+          <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Shear channel capacitance and force plot">
+            <rect x="0" y="0" width="${width}" height="${height}" fill="#ffffff"></rect>
+            ${channelPlots}
+            <rect x="${padLeft}" y="${forceTop}" width="${plotWidth}" height="${forceHeight}" fill="#ffffff" stroke="#d7dee9"></rect>
+            <text x="${padLeft - 22}" y="${forceTop + forceHeight / 2}" text-anchor="middle" transform="rotate(-90 ${padLeft - 22} ${forceTop + forceHeight / 2})" fill="#20242c" font-size="11" font-family="Inter, sans-serif">Force (N)</text>
+            <text x="${width / 2 - 20}" y="${height - 7}" fill="#20242c" font-size="11" font-family="Inter, sans-serif">Time (s)</text>
+            <path d="${forcePath}" fill="none" stroke="#3f8b42" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+            ${timeTicks}
+          </svg>
+        `;
+      }
+
+      function shearDetectionTable(negativeByChannel, deltaEventsByChannel) {
+        const channels = Array.from({ length: 8 }, (_, index) => index + 1);
+        const negativeCells = channels.map((channel) => {
+          const item = negativeByChannel.find((entry) => entry.channel === channel);
+          return item?.values?.length ? `${sig3(Math.min(...item.values))} pF` : "none";
+        });
+        const deltaCells = channels.map((channel) => {
+          const events = deltaEventsByChannel.filter((event) => event.channel === channel);
+          return events.length ? `${sig3(Math.max(...events.map((event) => event.delta)))} pF` : "none";
+        });
+        const row = (label, cells) => `
+          <tr>
+            <th><strong>${label}</strong></th>
+            ${cells.map((cell) => `<td${cell !== "none" ? ' class="metric-alert"' : ""}>${cell}</td>`).join("")}
+          </tr>
+        `;
+        return `
+          <div class="stats-table-wrap">
+            <table class="stats-table">
+              <thead>
+                <tr>
+                  <th></th>
+                  ${channels.map((channel) => `<th>ch ${channel}</th>`).join("")}
+                </tr>
+              </thead>
+              <tbody>
+                ${row("negative CAP", negativeCells)}
+                ${row("delta_CAP_gt_10pF", deltaCells)}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+
+      // fill the shear analysis tabs and automatically flag channels that cross the delta threshold.
+      // render the Shear Report Output: editable fields + colored preview + copy.
+      function renderShearReportPanel(shortedChannels, testResult) {
+        shearReportShorted = (shortedChannels && shortedChannels !== "None") ? shortedChannels : "None";
+        shearReportResult = (String(testResult).toUpperCase() === "PASS") ? "Pass" : "Fail";
+        document.getElementById("shear-reportOutput").innerHTML = `
+          <div class="report-fields">
+            <label class="report-field"><span>Site</span>
+              <select id="shearSite" onchange="renderShearReport()">
+                <option value="">Select site…</option>
+                <option value="ULP">ULP</option>
+                <option value="Roseman">Roseman</option>
+                <option value="Roseman - ULP">Roseman - ULP</option>
+                <option value="ULP - Roseman">ULP - Roseman</option>
+              </select>
+            </label>
+            <label class="report-field"><span>Shear Fixture</span>
+              <select id="shearFixture" onchange="renderShearReport()">
+                <option value="">Select fixture…</option>
+                <option value="FXT0009-01">FXT0009-01</option>
+                <option value="FXT0009-02">FXT0009-02</option>
+              </select>
+            </label>
+            <label class="report-field"><span>Sign off</span>
+              <input id="shearSignoff" placeholder="Initials" oninput="renderShearReport()" />
+            </label>
+          </div>
+          <div class="copy-row">
+            <button id="copyShearReportButton" onclick="copyShearReportValues()">Copy Values</button>
+          </div>
+          <div id="shearReportPreview"></div>
+          <textarea id="shearReportOutputText" class="copy-source" readonly></textarea>
+        `;
+        renderShearReport();
+      }
+
+      function shearTrackerOutput() {
+        const fieldValue = (id) => (document.getElementById(id)?.value || "").trim();
+        const headerTop = ["Identification", "", "SHEARING TEST", "", "", "", "", "", ""];
+        const header = [
+          "Sensor Lot Number", "Site", "Test Date", "Shear Fixture", "Shear Test software",
+          "Vena Vitals Wearable iOS App", "Shorted CH(S) Via Shear", "FPQC-S-001 Shearing Test Results", "Sign off",
+        ];
+        const row = [
+          config().sensor_id || "", fieldValue("shearSite"), isoDate(), fieldValue("shearFixture"),
+          "SW002", "SW0004", shearReportShorted, shearReportResult, fieldValue("shearSignoff"),
+        ];
+        return [headerTop.join("\t"), header.join("\t"), row.join("\t")].join("\n");
+      }
+
+      function renderShearReport() {
+        const tsv = shearTrackerOutput();
+        const preview = document.getElementById("shearReportPreview");
+        const text = document.getElementById("shearReportOutputText");
+        if (preview) preview.innerHTML = coloredReportPreviewTable(tsv);
+        if (text) text.value = tsv;
+      }
+
+      async function copyShearReportValues() {
+        const required = [
+          { id: "shearSite", label: "Site" },
+          { id: "shearFixture", label: "Shear Fixture" },
+          { id: "shearSignoff", label: "Sign off" },
+        ];
+        const blanks = required.filter((field) => !(document.getElementById(field.id)?.value || "").trim());
+        if (blanks.length) {
+          const proceed = await promptConfirm(
+            `These fields are still blank: ${blanks.map((b) => b.label).join(", ")}.\n\nFill them in above, or copy anyway?`,
+            { title: "Some fields are blank", confirmLabel: "Copy anyway", cancelLabel: "Fill in" });
+          if (!proceed) {
+            const first = document.getElementById(blanks[0].id);
+            if (first) first.focus();
+            return;
+          }
+        }
+        copyReportValues("shearReportOutputText", "copyShearReportButton");
+      }
+
+      function populateShearAnalysis(analysis = null) {
+        renderInteractivePanel("shear", analysis);
+        // Per-tab notice when a tab's underlying output is missing for this dataset.
+        const unavailable = `<p class="analysis-unavailable">This output is unavailable for this dataset</p>`;
+        // When the real matplotlib engine ran, show its figure + real detection.
+        if (analysis && analysis.shear_images && analysis.shear_images.raw_fig) {
+          const detectionRaw = Array.isArray(analysis.shear_detection) ? analysis.shear_detection : [];
+          // detection rows are present but none carry usable channel data: flag that
+          // the analysis data could not be fully read rather than rendering a blank table.
+          const detection = detectionRaw.filter((d) => Number.isFinite(Number(d.channel)));
+          const detectionUnreadable = detectionRaw.length && !detection.length;
+          const failed = detection.filter((d) => d.failed).map((d) => d.channel);
+          const shortedChannels = failed.length ? formatShortedChannels(failed) : "None";
+          const testResult = analysis.shear_result || (failed.length ? "FAIL" : "PASS");
+          // map the real detection into the same transposed table layout (channels
+          // as columns; negative CAP and delta_CAP_gt_10pF rows).
+          const negativeByChannel = detection.map((d) => ({ channel: d.channel, values: d.min_cap != null ? [d.min_cap] : [] }));
+          const deltaEventsByChannel = detection
+            .filter((d) => d.delta_over_count > 0)
+            .map((d) => ({ channel: d.channel, delta: d.max_delta }));
+          document.getElementById("shear-plot").innerHTML = `
+            <div class="em-analysis-png-wrap">${emPngImg(analysis.shear_images.raw_fig, "Raw shearing figure - CAP and force")}</div>
+          `;
+          document.getElementById("shear-detection").innerHTML = detectionUnreadable
+            ? `<p class="analysis-unavailable">Some analysis data could not be read - results may be incomplete</p>`
+            : (detection.length ? shearDetectionTable(negativeByChannel, deltaEventsByChannel) : unavailable);
+          renderShearReportPanel(shortedChannels, testResult);
+          showAnalysisTab("shear", "plot");
+          return;
+        }
+        // Real engine ran but produced no plot figure for this dataset: the plot
+        // tab shows the unavailable notice instead of falling through to a preview.
+        if (analysis && analysis.shear_images && !analysis.shear_images.raw_fig) {
+          document.getElementById("shear-plot").innerHTML = unavailable;
+          const detection = Array.isArray(analysis.shear_detection)
+            ? analysis.shear_detection.filter((d) => Number.isFinite(Number(d.channel)))
+            : [];
+          const negativeByChannel = detection.map((d) => ({ channel: d.channel, values: d.min_cap != null ? [d.min_cap] : [] }));
+          const deltaEventsByChannel = detection
+            .filter((d) => d.delta_over_count > 0)
+            .map((d) => ({ channel: d.channel, delta: d.max_delta }));
+          document.getElementById("shear-detection").innerHTML = detection.length
+            ? shearDetectionTable(negativeByChannel, deltaEventsByChannel)
+            : unavailable;
+          const failed = detection.filter((d) => d.failed).map((d) => d.channel);
+          renderShearReportPanel(failed.length ? formatShortedChannels(failed) : "None", analysis.shear_result || (failed.length ? "FAIL" : "PASS"));
+          showAnalysisTab("shear", "plot");
+          return;
+        }
+
+        const readings = latestShearAnalysisData.length ? latestShearAnalysisData : [{ time: 0, force: 0 }];
+        const channelSeries = Array.from({ length: 8 }, (_, channelIndex) => {
+          const baseline = 22 + (8 - channelIndex) * 0.55;
+          const values = readings.map((point, pointIndex) => {
+            const pulse = Math.max(0, point.force) * (0.13 + channelIndex * 0.015);
+            const ripple = Math.sin(point.time * (0.8 + channelIndex * 0.09)) * 0.18;
+            const burst = pointIndex % (42 + channelIndex * 3) < 8 ? point.force * 0.08 : 0;
+            return baseline + pulse + ripple + burst;
+          });
+          return { channel: channelIndex + 1, values };
+        });
+        const negativeByChannel = channelSeries.map(({ channel, values }) => {
+          const negativeValues = values.filter((value) => value < 0);
+          return { channel, count: negativeValues.length, values: negativeValues };
+        });
+        const deltaEventsByChannel = channelSeries.map(({ channel, values }) => {
+          const events = [];
+          values.forEach((value, index) => {
+            if (index === 0) return;
+            const delta = Math.abs(value - values[index - 1]);
+            if (delta > 10) events.push({ channel, delta, time: readings[index]?.time || 0 });
+          });
+          return events;
+        }).flat();
+        const failedChannels = deltaEventsByChannel.map((event) => event.channel);
+        const shortedChannels = formatShortedChannels(failedChannels);
+        const testResult = shortedChannels === "None" ? "PASS" : "FAIL";
+        document.getElementById("shear-plot").innerHTML = `
+          <div class="analysis-plot-scroll shear-analysis-plot">${shearChannelPlotSvg(readings)}</div>
+        `;
+        document.getElementById("shear-detection").innerHTML = shearDetectionTable(negativeByChannel, deltaEventsByChannel);
+        renderShearReportPanel(shortedChannels, testResult);
+        showAnalysisTab("shear", "plot");
+      }

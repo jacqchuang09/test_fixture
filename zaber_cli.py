@@ -4,14 +4,17 @@ class ZaberCLI:
     def __init__(self):
         self.connection = None
         self.axis = None
+        self.last_error = None   # human-readable reason the last connect() failed
 
     def connect(self, comport):
         # import here so the preview can still open if zaber-motion is missing.
+        self.last_error = None
         try:
             from zaber_motion.ascii import Connection
             from zaber_motion import exceptions
         except ImportError as exc:
-            print(f"Missing zaber-motion package: {exc}")
+            self.last_error = f"zaber-motion package not available: {exc}"
+            print(self.last_error)
             return 0
 
         try:
@@ -19,7 +22,11 @@ class ZaberCLI:
             self.connection = Connection.open_serial_port(comport)
             device_list = self.connection.detect_devices()
             if not device_list:
-                print("No Zaber devices detected")
+                self.last_error = (
+                    f"Port {comport} opened but no Zaber device answered "
+                    "(wrong port, wrong baud, or the stage is off)."
+                )
+                print(self.last_error)
                 return 0
 
             device = device_list[0]
@@ -29,11 +36,13 @@ class ZaberCLI:
 
             print("Device fully connected")
             return 1
-        except exceptions.ConnectionFailedException:
-            print("Connection Failed")
+        except exceptions.ConnectionFailedException as exc:
+            self.last_error = f"Could not open {comport}: {exc} (is another program using it?)"
+            print(self.last_error)
             return 0
         except Exception as exc:
-            print(f"Zaber connection error: {exc}")
+            self.last_error = f"{type(exc).__name__} on {comport}: {exc}"
+            print(self.last_error)
             return 0
 
     def disconnect(self):

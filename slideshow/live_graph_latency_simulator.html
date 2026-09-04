@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Live Graph Latency Simulator</title>
+<style>
+  :root{
+    --bg:#0E1217; --panel:#161C24; --panel2:#1B232D; --line:#26303C;
+    --ink:#E6EDF3; --muted:#8294A6; --faint:#5A6A7C;
+    --acq:#38E1C6;      /* acquired / true signal */
+    --disp:#F2B33D;     /* what's on screen, lagging */
+    --warn:#FF5C5C; --ok:#5BD6A0;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:20px 16px 56px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--faint);margin:0 0 6px}
+  h1{font-size:21px;line-height:1.25;margin:0 0 6px;font-weight:650;letter-spacing:-.01em}
+  .sub{color:var(--muted);font-size:13.5px;line-height:1.5;margin:0 0 20px;max-width:60ch}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;margin:14px 0}
+  .panel h2{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);margin:0 0 12px;font-weight:600}
+
+  /* Readout */
+  .readout{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .big{font-family:var(--mono);font-size:46px;line-height:1;font-weight:600;color:var(--disp);
+    font-variant-numeric:tabular-nums}
+  .big .u{font-size:18px;color:var(--muted);margin-left:2px}
+  .range{font-family:var(--mono);font-size:13px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .verdict{margin-top:10px;font-size:13.5px;line-height:1.5;color:var(--ink)}
+  .verdict b{color:var(--acq);font-weight:600}
+
+  /* Scope */
+  .scopebox{position:relative;background:var(--panel2);border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  canvas{display:block;width:100%;height:230px}
+  .legend{position:absolute;top:9px;left:11px;font-family:var(--mono);font-size:11px;line-height:1.7;
+    pointer-events:none}
+  .legend span{display:inline-block;width:9px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+  .gapread{position:absolute;top:9px;right:11px;font-family:var(--mono);font-size:11px;color:var(--disp);
+    text-align:right}
+  .gapread small{color:var(--faint);display:block;font-size:10px}
+
+  /* Breakdown */
+  .bar{display:flex;height:30px;border-radius:6px;overflow:hidden;border:1px solid var(--line)}
+  .seg{height:100%;min-width:2px;transition:width .18s ease}
+  .keys{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:7px 16px}
+  .key{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted);
+    font-variant-numeric:tabular-nums}
+  .key i{width:10px;height:10px;border-radius:3px;flex:none}
+  .key b{color:var(--ink);font-weight:600;font-family:var(--mono);margin-left:auto;font-size:12px}
+
+  /* Throughput */
+  .meterrow{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .meter{flex:1;height:10px;border-radius:6px;background:#0c1118;border:1px solid var(--line);overflow:hidden}
+  .meter>div{height:100%;width:0;background:var(--ok);transition:width .18s,background .18s}
+  .meterpct{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums;min-width:54px;text-align:right}
+  .status{font-size:13px;line-height:1.5}
+  .status.bad{color:var(--warn)} .status.good{color:var(--ok)} .status.warn{color:var(--disp)}
+
+  /* Controls */
+  .ctrl{margin:15px 0}
+  .ctrl:first-child{margin-top:4px}
+  .clabel{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:7px;gap:10px}
+  .clabel .name{font-size:13.5px;color:var(--ink)}
+  .clabel .val{font-family:var(--mono);font-size:13px;color:var(--acq);font-variant-numeric:tabular-nums}
+  .clabel .hint{font-size:11.5px;color:var(--faint);font-weight:400}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:26px;background:transparent;cursor:pointer}
+  input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:3px;background:var(--line)}
+  input[type=range]::-moz-range-track{height:5px;border-radius:3px;background:var(--line)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    border-radius:50%;background:var(--acq);border:3px solid var(--bg);margin-top:-8px;
+    box-shadow:0 0 0 1px var(--acq)}
+  input[type=range]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:var(--acq);
+    border:3px solid var(--bg);box-shadow:0 0 0 1px var(--acq)}
+  input[type=range]:focus-visible{outline:2px solid var(--disp);outline-offset:4px;border-radius:4px}
+  input[type=range]:disabled{opacity:.35;cursor:not-allowed}
+  .seg-toggle{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .seg-toggle button{font-family:var(--sans);font-size:13px;color:var(--muted);background:var(--panel2);
+    border:0;padding:9px 14px;cursor:pointer}
+  .seg-toggle button[aria-pressed=true]{background:var(--acq);color:#06201b;font-weight:600}
+  .seg-toggle button:focus-visible{outline:2px solid var(--disp);outline-offset:-2px}
+  .presets{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+  .presets button{font-family:var(--mono);font-size:11.5px;letter-spacing:.04em;color:var(--ink);
+    background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:8px 11px;cursor:pointer}
+  .presets button:hover{border-color:var(--acq)}
+  .presets button:focus-visible{outline:2px solid var(--disp);outline-offset:2px}
+
+  .note{font-size:12.5px;line-height:1.6;color:var(--muted)}
+  .note code{font-family:var(--mono);font-size:11.5px;background:var(--panel2);border:1px solid var(--line);
+    border-radius:4px;padding:1px 5px;color:var(--acq)}
+  .note b{color:var(--ink);font-weight:600}
+  .disclaimer{font-size:11.5px;color:var(--faint);line-height:1.55;margin-top:18px;
+    border-top:1px solid var(--line);padding-top:14px}
+  @media (max-width:480px){ .big{font-size:38px} .keys{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <!-- READOUT -->
+  <div class="panel">
+    <h2>Estimated display lag</h2>
+    <div class="readout">
+      <div class="big"><span id="typ">-</span><span class="u">ms</span></div>
+      <div class="range">typical &middot; range <span id="lo">-</span>-<span id="hi">-</span> ms</div>
+    </div>
+    <div class="verdict" id="verdict"></div>
+  </div>
+
+  <!-- SCOPE -->
+  <div class="panel">
+    <h2>Acquired vs. displayed</h2>
+    <div class="scopebox">
+      <canvas id="scope" aria-label="Animated trace comparing the true acquired signal against the lagged on-screen signal"></canvas>
+      <div class="legend">
+        <div><span style="background:var(--acq)"></span>acquired (true)</div>
+        <div><span style="background:var(--disp)"></span>on screen</div>
+      </div>
+      <div class="gapread"><span id="gapms">-</span> ms<small>behind real time</small></div>
+    </div>
+  </div>
+
+  <!-- BREAKDOWN -->
+  <div class="panel">
+    <h2>Where the lag comes from (typical)</h2>
+    <div class="bar" id="bar"></div>
+    <div class="keys" id="keys"></div>
+  </div>
+
+  <!-- THROUGHPUT -->
+  <div class="panel">
+    <h2>Can the pipeline keep up?</h2>
+    <div class="meterrow">
+      <div class="meter"><div id="meterfill"></div></div>
+      <div class="meterpct" id="meterpct">-</div>
+    </div>
+    <div class="status" id="keepup"></div>
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="panel">
+    <h2>Pipeline parameters</h2>
+
+    <div class="presets" role="group" aria-label="Presets">
+      <button type="button" data-preset="best">Best case</button>
+      <button type="button" data-preset="typical">Typical</button>
+      <button type="button" data-preset="heavy">Heavy redraw</button>
+    </div>
+
+    <div class="ctrl" style="margin-top:18px">
+      <div class="clabel"><span class="name">Sample rate</span><span class="val"><span id="srVal"></span> Hz</span></div>
+      <input id="sr" type="range" min="10" max="1000" step="10" value="100">
+    </div>
+
+    <div class="ctrl">
+      <div class="clabel"><span class="name">Push mode <span class="hint">how samples reach the UI</span></span></div>
+      <div class="seg-toggle" role="group" aria-label="Push mode">
+        <button type="button" id="modeBatch" aria-pressed="true">Batched</button>
+        <button type="button" id="modeSample" aria-pressed="false">Per sample</button>
+      </div>
+    </div>
+
+    <div class="ctrl" id="batchCtrl">
+      <div class="clabel"><span class="name">Batch interval <span class="hint">push every N ms</span></span><span class="val"><span id="biVal"></span> ms</span></div>
+      <input id="bi" type="range" min="5" max="250" step="5" value="50">
+    </div>
+
+    <div class="ctrl">
+      <div class="clabel"><span class="name">Backend read + process <span class="hint">per sample</span></span><span class="val"><span id="beVal"></span> ms</span></div>
+      <input id="be" type="range" min="0" max="5" step="0.1" value="0.5">
+    </div>
+
+    <div class="ctrl">
+      <div class="clabel"><span class="name">Bridge overhead <span class="hint">per push, JS call</span></span><span class="val"><span id="ipcVal"></span> ms</span></div>
+      <input id="ipc" type="range" min="0" max="30" step="0.5" value="5">
+    </div>
+
+    <div class="ctrl">
+      <div class="clabel"><span class="name">Redraw cadence</span><span class="val"><span id="fpsVal"></span> FPS</span></div>
+      <input id="fps" type="range" min="5" max="60" step="1" value="30">
+    </div>
+
+    <div class="ctrl" style="margin-bottom:2px">
+      <div class="clabel"><span class="name">Redraw cost <span class="hint">per frame</span></span><span class="val"><span id="drVal"></span> ms</span></div>
+      <input id="dr" type="range" min="1" max="60" step="1" value="8">
+    </div>
+  </div>
+
+  <!-- MEASURE -->
+  <div class="panel">
+    <h2>Measure the real number</h2>
+    <p class="note">This is a model. To get the true figure for your build, stamp a sample at acquisition and again
+      when its point is drawn, then take the difference:</p>
+    <p class="note" style="margin-top:10px">
+      <b>Backend:</b> attach <code>t_acq = time.perf_counter()</code> to each reading before it leaves Python.<br>
+      <b>Frontend:</b> in the draw callback, record <code>performance.now()</code> and compare to the sample's
+      acquisition stamp passed alongside the data.<br>
+      <b>Report</b> the median and 95th-percentile gap over a 30-60 s run. The 95th percentile is the honest
+      worst-case to quote, not the average.</p>
+    <p class="note" style="margin-top:10px"><b>Safety note that outranks all of this:</b> spike and force-limit cutoffs
+      must run on the raw sample stream in the backend, never on what the graph shows. Display lag is a UX number;
+      it must not sit in the safety path.</p>
+  </div>
+
+  <p class="disclaimer">Model assumes a single-threaded UI path and averages each waiting stage over its interval
+    (a sample waits, on average, half a sample period and half a frame). Real systems add OS scheduling jitter,
+    USB driver buffering, and garbage-collection pauses, so treat these as a floor for typical lag, not a ceiling.</p>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var $=function(id){return document.getElementById(id);};
+  var state={ sr:100, mode:"batched", bi:50, be:0.5, ipc:5, fps:30, dr:8 };
+
+  // ---- model ----
+  function compute(){
+    var sp=1000/state.sr;               // sample period ms
+    var fi=1000/state.fps;              // frame interval ms
+    var batched=state.mode==="batched";
+    var twTyp=batched?state.bi/2:0;
+    var twMax=batched?state.bi:0;
+
+    var comp={
+      "Acquisition": sp/2,
+      "Backend": state.be,
+      "Transport wait": twTyp,
+      "Bridge": state.ipc,
+      "Frame wait": fi/2,
+      "Redraw": state.dr
+    };
+    var typical=0; for(var k in comp){ typical+=comp[k]; }
+    var lo=state.be+state.ipc+state.dr;
+    var hi=sp+state.be+twMax+state.ipc+fi+state.dr;
+
+    // throughput (ms of work per second of wall clock, single core)
+    var pushesPerSec=batched?(1000/state.bi):state.sr;
+    var load=pushesPerSec*state.ipc + state.fps*state.dr + state.sr*state.be;
+    return {sp:sp,fi:fi,typical:typical,lo:lo,hi:hi,comp:comp,load:load};
+  }
+
+  var COLORS={
+    "Acquisition":"#2BA89A","Backend":"#3E5572","Transport wait":"#6C5CE0",
+    "Bridge":"#B07CC6","Frame wait":"#C98A2E","Redraw":"#F2B33D"
+  };
+
+  var curLat=70; // ms, used by animation
+
+  function render(){
+    var m=compute();
+    curLat=m.typical;
+    $("typ").textContent=Math.round(m.typical);
+    $("lo").textContent=Math.round(m.lo);
+    $("hi").textContent=Math.round(m.hi);
+
+    // verdict
+    var v=$("verdict"), t=m.typical;
+    var head, tail;
+    if(t<40){ head="This reads as <b>live</b>."; }
+    else if(t<120){ head="This is <b>streaming, not hard real time</b>."; }
+    else { head="This is <b>noticeably behind</b>."; }
+    tail=" A force event shows up about "+Math.round(t)+" ms after it happens"
+       + (m.fi/2>t*0.35?", and the graph can't resolve anything faster than one frame ("+Math.round(m.fi)+" ms), so brief spikes get smoothed away on screen.":".");
+    v.innerHTML=head+tail;
+
+    // breakdown bar
+    var bar=$("bar"), keys=$("keys"); bar.innerHTML=""; keys.innerHTML="";
+    var order=["Acquisition","Backend","Transport wait","Bridge","Frame wait","Redraw"];
+    order.forEach(function(k){
+      var val=m.comp[k];
+      var seg=document.createElement("div");
+      seg.className="seg"; seg.style.background=COLORS[k];
+      seg.style.width=(m.typical>0?(val/m.typical*100):0)+"%";
+      seg.title=k+": "+val.toFixed(1)+" ms";
+      bar.appendChild(seg);
+      var key=document.createElement("div"); key.className="key";
+      key.innerHTML='<i style="background:'+COLORS[k]+'"></i>'+k+'<b>'+val.toFixed(1)+'</b>';
+      keys.appendChild(key);
+    });
+
+    // throughput
+    var pct=m.load/1000*100;
+    var fill=$("meterfill"), pctEl=$("meterpct"), ku=$("keepup");
+    fill.style.width=Math.min(100,pct)+"%";
+    pctEl.textContent=Math.round(pct)+"%";
+    ku.className="status";
+    if(pct<70){ fill.style.background="var(--ok)"; ku.classList.add("good");
+      ku.textContent="Comfortable. The UI thread uses about "+Math.round(pct)+"% of one core, with headroom to spare."; }
+    else if(pct<100){ fill.style.background="var(--disp)"; ku.classList.add("warn");
+      ku.textContent="Tight. At ~"+Math.round(pct)+"% of one core there's little margin; jitter or a heavier redraw will start dropping frames."; }
+    else { fill.style.background="var(--warn)"; ku.classList.add("bad");
+      ku.textContent="Over budget. Work needed per second exceeds one core ("+Math.round(pct)+"%), so the queue grows and lag climbs without bound. Batch more, draw fewer points, or lower the redraw rate."; }
+
+    // sync labels
+    $("srVal").textContent=state.sr;
+    $("biVal").textContent=state.bi;
+    $("beVal").textContent=state.be.toFixed(1);
+    $("ipcVal").textContent=state.ipc.toFixed(1);
+    $("fpsVal").textContent=state.fps;
+    $("drVal").textContent=state.dr;
+  }
+
+  // ---- scope animation ----
+  var cv=$("scope"), ctx=cv.getContext("2d"), dpr=Math.max(1,window.devicePixelRatio||1);
+  var W=0,H=0;
+  function resize(){
+    var r=cv.getBoundingClientRect();
+    W=r.width; H=r.height;
+    cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener("resize",resize);
+
+  var reduce=window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var WIN=2.0; // seconds visible
+
+  function truth(tsec){
+    // fatigue-like signal: cyclic press with a slow envelope, normalized 0..1
+    var base=0.5+0.42*Math.sin(2*Math.PI*1.1*tsec);
+    var env=0.85+0.15*Math.sin(2*Math.PI*0.18*tsec);
+    return Math.min(1,Math.max(0, base*env));
+  }
+  function yOf(v){ var pad=26; return H-pad-(v*(H-2*pad)); }
+
+  function drawScope(now){
+    var tsec=now/1000;
+    ctx.clearRect(0,0,W,H);
+    // grid
+    ctx.strokeStyle="#1f2935"; ctx.lineWidth=1;
+    for(var gy=0;gy<=4;gy++){ var y=26+gy*((H-52)/4); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); }
+    for(var gx=0;gx<=8;gx++){ var x=gx*(W/8); ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke(); }
+    // now cursor
+    ctx.strokeStyle="#33414f"; ctx.setLineDash([3,4]);
+    ctx.beginPath();ctx.moveTo(W-1,0);ctx.lineTo(W-1,H);ctx.stroke(); ctx.setLineDash([]);
+
+    var Lsec=curLat/1000;
+    function trace(offsetSec,color,width,alpha){
+      ctx.strokeStyle=color; ctx.lineWidth=width; ctx.globalAlpha=alpha; ctx.beginPath();
+      for(var px=0;px<=W;px++){
+        var tx=tsec - WIN*(1-px/W) - offsetSec;
+        var y=yOf(truth(tx));
+        if(px===0)ctx.moveTo(px,y); else ctx.lineTo(px,y);
+      }
+      ctx.stroke(); ctx.globalAlpha=1;
+    }
+    // acquired (true) - cyan
+    trace(0,"#38E1C6",2,1);
+    // displayed (lagged) - amber
+    trace(Lsec,"#F2B33D",2,0.95);
+
+    // marker at a recent peak region: vertical connector showing the gap
+    var mx=W*0.62;
+    var tA=tsec - WIN*(1-mx/W);
+    var yA=yOf(truth(tA));
+    var yD=yOf(truth(tA - Lsec));
+    ctx.fillStyle="#38E1C6"; ctx.beginPath();ctx.arc(mx,yA,3.2,0,7);ctx.fill();
+    ctx.fillStyle="#F2B33D"; ctx.beginPath();ctx.arc(mx,yD,3.2,0,7);ctx.fill();
+
+    $("gapms").textContent=Math.round(curLat);
+  }
+
+  function loop(now){ drawScope(now); requestAnimationFrame(loop); }
+
+  // ---- wiring ----
+  function bindRange(id,key,parse){
+    $(id).addEventListener("input",function(){ state[key]=parse($(id).value); render(); });
+  }
+  bindRange("sr","sr",function(v){return +v;});
+  bindRange("bi","bi",function(v){return +v;});
+  bindRange("be","be",function(v){return +v;});
+  bindRange("ipc","ipc",function(v){return +v;});
+  bindRange("fps","fps",function(v){return +v;});
+  bindRange("dr","dr",function(v){return +v;});
+
+  function setMode(mode){
+    state.mode=mode;
+    $("modeBatch").setAttribute("aria-pressed", mode==="batched");
+    $("modeSample").setAttribute("aria-pressed", mode==="persample");
+    $("bi").disabled = mode!=="batched";
+    $("batchCtrl").style.opacity = mode==="batched"?"1":".4";
+    render();
+  }
+  $("modeBatch").addEventListener("click",function(){setMode("batched");});
+  $("modeSample").addEventListener("click",function(){setMode("persample");});
+
+  var PRESETS={
+    best:    {sr:100,mode:"persample",bi:50,be:0.3,ipc:2,fps:60,dr:4},
+    typical: {sr:100,mode:"batched",  bi:50,be:0.5,ipc:5,fps:30,dr:8},
+    heavy:   {sr:100,mode:"batched",  bi:80,be:0.8,ipc:8,fps:15,dr:35}
+  };
+  function applyPreset(name){
+    var p=PRESETS[name]; if(!p)return;
+    state.sr=p.sr; state.bi=p.bi; state.be=p.be; state.ipc=p.ipc; state.fps=p.fps; state.dr=p.dr;
+    $("sr").value=p.sr; $("bi").value=p.bi; $("be").value=p.be; $("ipc").value=p.ipc; $("fps").value=p.fps; $("dr").value=p.dr;
+    setMode(p.mode);
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-preset]"),function(b){
+    b.addEventListener("click",function(){applyPreset(b.getAttribute("data-preset"));});
+  });
+
+  // init
+  resize(); setMode("batched"); render();
+  if(reduce){ drawScope(1240); } else { requestAnimationFrame(loop); }
+})();
+</script>
+</body>
+</html>

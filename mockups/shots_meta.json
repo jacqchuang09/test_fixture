@@ -1,0 +1,751 @@
+{
+  "main": {
+    "w": 1440,
+    "h": 605.59375,
+    "boxes": {
+      "title": {
+        "x": 260,
+        "y": 37.265625,
+        "w": 698.203125,
+        "h": 32.453125
+      },
+      "saveFolder": {
+        "x": 285,
+        "y": 203.59375,
+        "w": 870,
+        "h": 51
+      },
+      "sensorId": {
+        "x": 285,
+        "y": 328.59375,
+        "w": 304,
+        "h": 52
+      },
+      "sensorPreview": {
+        "x": 285,
+        "y": 388.59375,
+        "w": 426,
+        "h": 18
+      },
+      "sensorType": {
+        "x": 729,
+        "y": 328.59375,
+        "w": 426,
+        "h": 51
+      },
+      "customCheck": {
+        "x": 285,
+        "y": 414.59375,
+        "w": 426,
+        "h": 51
+      },
+      "verify": {
+        "x": 285,
+        "y": 487.59375,
+        "w": 870,
+        "h": 51
+      }
+    }
+  },
+  "main_custom": {
+    "w": 1440,
+    "h": 578.59375,
+    "boxes": {
+      "customField": {
+        "x": 285,
+        "y": 298.59375,
+        "w": 426,
+        "h": 81
+      }
+    }
+  },
+  "main_reverify": {
+    "w": 1440,
+    "h": 647.59375,
+    "boxes": {
+      "message": {
+        "x": -100,
+        "y": 0,
+        "w": 0,
+        "h": 0
+      }
+    }
+  },
+  "help_icons": {
+    "w": 1440,
+    "h": 605.59375,
+    "boxes": {
+      "help": {
+        "x": 385.140625,
+        "y": 173.59375,
+        "w": 22,
+        "h": 22
+      }
+    },
+    "helpIcons": [
+      {
+        "label": "Save Folder",
+        "tooltip": "Folder where run files, exported data, and analysis outputs will be saved.",
+        "x": 385.140625,
+        "y": 173.59375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Sensor ID",
+        "tooltip": "Format: YYMMDDB##S##X. Type two digits for date, batch, and sensor. Location can be A, B, AB, or BA.",
+        "x": 369.28125,
+        "y": 298.59375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Use Custom Sensor ID",
+        "tooltip": "When enabled, the Sensor ID builder is replaced with a free-text custom Sensor ID field.",
+        "x": 522.859375,
+        "y": 429.09375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Sensor Type",
+        "tooltip": "Standard uses normal channel ordering. Inverted reverses the channel order.",
+        "x": 835.75,
+        "y": 298.59375,
+        "w": 22,
+        "h": 22
+      }
+    ]
+  },
+  "existing_test": {
+    "w": 820,
+    "h": 275,
+    "boxes": {
+      "versioned": {
+        "x": 25,
+        "y": 192,
+        "w": 379,
+        "h": 58
+      },
+      "redo": {
+        "x": 416,
+        "y": 192,
+        "w": 379,
+        "h": 58
+      }
+    }
+  },
+  "test_config": {
+    "w": 920,
+    "h": 453.59375,
+    "boxes": {
+      "testType": {
+        "x": 25,
+        "y": 104.59375,
+        "w": 426,
+        "h": 51
+      },
+      "surfaceArea": {
+        "x": 469,
+        "y": 104.59375,
+        "w": 354,
+        "h": 51
+      },
+      "runs": {
+        "x": 25,
+        "y": 203.59375,
+        "w": 426,
+        "h": 51
+      },
+      "comport": {
+        "x": 469,
+        "y": 203.59375,
+        "w": 426,
+        "h": 51
+      },
+      "runToRedo": {
+        "x": 25,
+        "y": 302.59375,
+        "w": 426,
+        "h": 51
+      },
+      "begin": {
+        "x": 25,
+        "y": 377.59375,
+        "w": 282,
+        "h": 51
+      },
+      "openCalib": {
+        "x": 319,
+        "y": 377.59375,
+        "w": 282,
+        "h": 51
+      }
+    },
+    "helpIcons": [
+      {
+        "label": "Test Type",
+        "tooltip": "EM Test performs force-controlled compression testing. Shear Test performs live shear-response testing. Manual Test allows direct actuator control. Fatigue Test repeatedly compresses the sensor over many cycles.",
+        "x": 109.875,
+        "y": 74.59375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Surface Area",
+        "tooltip": "Surface Area of the Ecoflex block used to calculate pressure from force measurements.",
+        "x": 580.03125,
+        "y": 74.59375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Number of Runs",
+        "tooltip": "Number of EM test runs to complete.",
+        "x": 160.203125,
+        "y": 173.59375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Zaber COM Port",
+        "tooltip": "Select the port connected to the Zaber actuator.",
+        "x": 603.265625,
+        "y": 173.59375,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Run to Redo",
+        "tooltip": "Redo only a specific EM run from an existing test folder. This is only available when ‘Redo a Specific Run’ is selected from the Existing Test Found popup.",
+        "x": 127.828125,
+        "y": 272.59375,
+        "w": 22,
+        "h": 22
+      }
+    ]
+  },
+  "calibration": {
+    "w": 1040,
+    "h": 550,
+    "boxes": {}
+  },
+  "em_test": {
+    "w": 1180,
+    "h": 623.6875,
+    "boxes": {
+      "state": {
+        "x": 457.96875,
+        "y": 108,
+        "w": 264.0625,
+        "h": 34
+      },
+      "status": {
+        "x": 25,
+        "y": 154,
+        "w": 511.828125,
+        "h": 368.6875
+      },
+      "graph": {
+        "x": 552.828125,
+        "y": 154,
+        "w": 602.171875,
+        "h": 368.6875
+      },
+      "start": {
+        "x": 25,
+        "y": 538.6875,
+        "w": 370,
+        "h": 48
+      },
+      "pause": {
+        "x": 405,
+        "y": 538.6875,
+        "w": 370,
+        "h": 48
+      },
+      "analysis": {
+        "x": 785,
+        "y": 538.6875,
+        "w": 370,
+        "h": 48
+      }
+    }
+  },
+  "em_an_raw": {
+    "w": 1440,
+    "h": 2173,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "em_an_ps": {
+    "w": 1440,
+    "h": 950.25,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "em_an_all": {
+    "w": 1440,
+    "h": 947.6875,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "em_an_summary": {
+    "w": 1440,
+    "h": 819,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "em_an_report": {
+    "w": 1440,
+    "h": 465,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "em_an_interactive": {
+    "w": 1440,
+    "h": 1785,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "shear_test": {
+    "w": 1180,
+    "h": 719,
+    "boxes": {
+      "graph": {
+        "x": -230,
+        "y": -740.5,
+        "w": 0,
+        "h": 0
+      },
+      "controls": {
+        "x": -230,
+        "y": -740.5,
+        "w": 0,
+        "h": 0
+      },
+      "start": {
+        "x": 25,
+        "y": 634,
+        "w": 370,
+        "h": 48
+      },
+      "stop": {
+        "x": 405,
+        "y": 634,
+        "w": 370,
+        "h": 48
+      },
+      "analysis": {
+        "x": 785,
+        "y": 634,
+        "w": 370,
+        "h": 48
+      }
+    },
+    "helpIcons": [
+      {
+        "label": "Last Seconds to Display",
+        "tooltip": "When Cumulative Time is off, the shear graph shows only the last selected number of seconds.",
+        "x": 221.625,
+        "y": 548,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Y-Axis Min",
+        "tooltip": "Lowest force value shown on the shear graph y-axis.",
+        "x": 402.234375,
+        "y": 548,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Y-Axis Limit",
+        "tooltip": "Highest force value shown on the shear graph y-axis.",
+        "x": 627.484375,
+        "y": 548,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Show Markers",
+        "tooltip": "Shows individual live force readings on top of the graph line.",
+        "x": 891.234375,
+        "y": 584.5,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Cumulative Time",
+        "tooltip": "When on, the shear graph shows the entire run from start to finish and ignores Last Seconds to Display.",
+        "x": 1123.671875,
+        "y": 584.5,
+        "w": 22,
+        "h": 22
+      }
+    ]
+  },
+  "sh_an_plot": {
+    "w": 1440,
+    "h": 957.0625,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "sh_an_detection": {
+    "w": 1440,
+    "h": 325,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "sh_an_report": {
+    "w": 1440,
+    "h": 433,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "manual_test": {
+    "w": 1180,
+    "h": 928,
+    "boxes": {
+      "mode": {
+        "x": 25,
+        "y": 168,
+        "w": 233.109375,
+        "h": 91
+      },
+      "primary": {
+        "x": 25,
+        "y": 271,
+        "w": 233.109375,
+        "h": 81
+      },
+      "speed": {
+        "x": 25,
+        "y": 364,
+        "w": 233.109375,
+        "h": 81
+      },
+      "moves": {
+        "x": 272.109375,
+        "y": 168,
+        "w": 148.34375,
+        "h": 277
+      },
+      "drag": {
+        "x": 434.453125,
+        "y": 168,
+        "w": 720.546875,
+        "h": 277
+      },
+      "graphs": {
+        "x": 25,
+        "y": 459,
+        "w": 368.65625,
+        "h": 284
+      },
+      "controls": {
+        "x": 25,
+        "y": 757,
+        "w": 1130,
+        "h": 72
+      },
+      "pause": {
+        "x": 25,
+        "y": 843,
+        "w": 560,
+        "h": 48
+      },
+      "analysis": {
+        "x": 595,
+        "y": 843,
+        "w": 560,
+        "h": 48
+      }
+    },
+    "helpIcons": [
+      {
+        "label": "Control By",
+        "tooltip": "Distance mode moves the actuator by a chosen millimeter increment. Force mode simulates compression until the selected target force is reached.",
+        "x": 116.296875,
+        "y": 168,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Increment Distance",
+        "tooltip": "Distance used for each Move Up or Move Down click. Move Down adds distance from the actuator baseline; Move Up subtracts it.",
+        "x": 187.78125,
+        "y": 271,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Actuator Speed",
+        "tooltip": "Assumed actuator travel speed used to estimate elapsed time on the manual preview graphs. Default is 2.0 mm/s.",
+        "x": 156.421875,
+        "y": 364,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Drag Position Control (mm)",
+        "tooltip": "Drag to choose a target position from 17 mm baseline to 50.8 mm max (full actuator travel). The actuator only moves after Confirm Drag Move is pressed.",
+        "x": 675.5,
+        "y": 185,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Last Seconds to Display",
+        "tooltip": "When Cumulative Time is off, time-based graphs show only the last selected number of seconds.",
+        "x": 221.625,
+        "y": 757,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Y-Axis Min",
+        "tooltip": "Lowest value shown on the manual test graph y-axis.",
+        "x": 402.234375,
+        "y": 757,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Y-Axis Limit",
+        "tooltip": "Highest value shown on the manual test graph y-axis.",
+        "x": 627.484375,
+        "y": 757,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Show Markers",
+        "tooltip": "Shows individual data points on top of the graph line.",
+        "x": 891.234375,
+        "y": 793.5,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Cumulative Time",
+        "tooltip": "When on, the graph shows the entire run from start to finish and ignores Seconds to Display.",
+        "x": 1123.671875,
+        "y": 793.5,
+        "w": 22,
+        "h": 22
+      }
+    ]
+  },
+  "manual_test_force": {
+    "w": 1180,
+    "h": 928,
+    "boxes": {
+      "primary": {
+        "x": 25,
+        "y": 271,
+        "w": 233.109375,
+        "h": 81
+      },
+      "moves": {
+        "x": 272.109375,
+        "y": 168,
+        "w": 148.34375,
+        "h": 277
+      }
+    }
+  },
+  "man_an_capforce": {
+    "w": 1440,
+    "h": 791,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "man_an_forcetime": {
+    "w": 1440,
+    "h": 791,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "man_an_captime": {
+    "w": 1440,
+    "h": 791,
+    "boxes": {
+      "tabs": {
+        "x": 23,
+        "y": 102,
+        "w": 1394,
+        "h": 38
+      }
+    }
+  },
+  "cyclical_test": {
+    "w": 1180,
+    "h": 782,
+    "boxes": {
+      "waveform": {
+        "x": 25,
+        "y": 198,
+        "w": 360,
+        "h": 48
+      },
+      "lower": {
+        "x": 25,
+        "y": 289.5,
+        "w": 288,
+        "h": 48
+      },
+      "upper": {
+        "x": 25,
+        "y": 382.5,
+        "w": 288,
+        "h": 48
+      },
+      "frequency": {
+        "x": 25,
+        "y": 475.5,
+        "w": 288,
+        "h": 48
+      },
+      "cycles": {
+        "x": 25,
+        "y": 567,
+        "w": 360,
+        "h": 48
+      },
+      "estimate": {
+        "x": 25,
+        "y": 635,
+        "w": 360,
+        "h": 48
+      },
+      "start": {
+        "x": 25,
+        "y": 697,
+        "w": 175,
+        "h": 48
+      },
+      "stop": {
+        "x": 210,
+        "y": 697,
+        "w": 175,
+        "h": 48
+      },
+      "graph": {
+        "x": 414,
+        "y": 181,
+        "w": 728,
+        "h": 563
+      }
+    },
+    "helpIcons": [
+      {
+        "label": "Waveform Type",
+        "tooltip": "Choose the force waveform used to cycle the actuator between the lower and upper force bounds. Sine is a smooth press/release. Square holds at each bound.",
+        "x": 149.34375,
+        "y": 168,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Lower Force Bound",
+        "tooltip": "Lowest force target in each fatigue cycle. Example: cycle between 1 N and 20 N.",
+        "x": 175.5,
+        "y": 258,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Upper Force Bound",
+        "tooltip": "Highest force target in each fatigue cycle. The actuator compresses the sensor repeatedly up to this force.",
+        "x": 176.28125,
+        "y": 351,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Frequency",
+        "tooltip": "Number of fatigue cycles per second.",
+        "x": 112.265625,
+        "y": 444,
+        "w": 22,
+        "h": 22
+      },
+      {
+        "label": "Number of Cycles",
+        "tooltip": "Total fatigue cycles to run. Default is 28800 cycles.",
+        "x": 165.609375,
+        "y": 537,
+        "w": 22,
+        "h": 22
+      }
+    ]
+  }
+}

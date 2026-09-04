@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ZaberGUI - Live Debug</title>
+<style>
+  /* Dev-only diagnostics dashboard. Reuses the operator GUI palette so it reads as
+     part of the same app. It polls GET /api/debug a few times a second and renders
+     the live actuator, load cell, and run-engine state. No controls, read-only. */
+  :root {
+    --bg: #f5f7fb; --panel: #ffffff; --line: #d7dee9; --line-strong: #c7d1df;
+    --text: #161d29; --muted: #697790; --console: #101827; --console-text: #d7deec;
+    --blue: #3f73e6; --green: #3f8b42; --red: #c5423c;
+    --shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px; line-height: 1.4;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 12px 18px; background: var(--panel); border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 2;
+  }
+  header h1 { font-size: 15px; font-weight: 700; margin: 0; }
+  .spacer { flex: 1; }
+  .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .conn {
+    display: inline-flex; align-items: center; gap: 7px; font-weight: 600;
+    padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line);
+  }
+  .conn .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .conn.ok   { color: var(--green); border-color: #bfe0c0; background: #f0f8f1; }
+  .conn.ok   .dot { background: var(--green); animation: pulse 1.4s ease-in-out infinite; }
+  .conn.down { color: var(--red);   border-color: #f0c9c7; background: #fbf1f0; }
+  .conn.down .dot { background: var(--red); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  main { padding: 18px; display: grid; gap: 14px;
+    grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--muted); margin: 0; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .rows { padding: 4px 0; }
+  .row { display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 5px 14px; }
+  .row .k { color: var(--muted); }
+  .row .v { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right;
+    word-break: break-word; transition: background-color 0.6s ease; border-radius: 4px;
+    padding: 0 4px; }
+  .row .v.flash { background: #fff4c2; transition: none; }
+
+  .pill { display: inline-block; font-weight: 700; font-size: 11px;
+    padding: 2px 9px; border-radius: 999px; }
+  .pill.good { color: var(--green); background: #eef7ef; }
+  .pill.bad  { color: var(--red);   background: #fbf0ef; }
+  .pill.neutral { color: var(--muted); background: #eef1f6; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 14px; border-bottom: 1px solid var(--line);
+    font-variant-numeric: tabular-nums; }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.empty { color: var(--muted); font-style: italic; }
+  .threads { padding: 8px 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .threads code { background: #eef1f6; color: var(--text); padding: 2px 8px;
+    border-radius: 6px; font-size: 12px; }
+
+  .full { grid-column: 1 / -1; }
+  pre { margin: 0; padding: 14px; background: var(--console); color: var(--console-text);
+    font-size: 12px; line-height: 1.5; overflow: auto; max-height: 360px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  details summary { cursor: pointer; padding: 10px 14px; color: var(--muted);
+    font-weight: 600; user-select: none; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>ZaberGUI Live Debug</h1>
+    <span id="conn" class="conn"><span class="dot"></span><span id="connText">connecting...</span></span>
+    <span class="spacer"></span>
+    <span class="meta">backend time <b id="btime">--</b></span>
+    <span class="meta">updated <b id="age">--</b></span>
+    <span class="meta">polling 4 Hz</span>
+  </header>
+
+  <main>
+    <section class="card"><h2>Zaber Actuator</h2><div class="rows" id="zaber"></div></section>
+    <section class="card"><h2>Load Cell (FUTEK)</h2><div class="rows" id="loadcell"></div></section>
+    <section class="card"><h2>Run Engine</h2><div class="rows" id="engine"></div></section>
+    <section class="card full"><h2>Pending EM Runs (in memory, unsaved until analysis)</h2>
+      <table><thead><tr><th>Run</th><th>Samples</th><th>Redo of</th><th>Reason</th></tr></thead>
+      <tbody id="pending"></tbody></table></section>
+    <section class="card full"><h2>Live Threads</h2><div class="threads" id="threads"></div></section>
+    <section class="card full"><details><summary>Raw /api/debug JSON</summary>
+      <pre id="raw">{}</pre></details></section>
+  </main>
+
+<script>
+  // Map a boolean to a colored pill by what the value MEANS, so idle state reads calm
+  // and only real conditions light up:
+  //   health -> true is green, false is red   (you want it up: connected, real device)
+  //   active -> true is green, false is gray   (lights up while doing work)
+  //   fault  -> true is red,   false is gray   (lights up only when something is wrong)
+  //   info   -> always gray                    (a mode, not good or bad: simulated)
+  function pill(value, mode) {
+    if (typeof value !== "boolean") return String(value);
+    let cls = "neutral";
+    if (mode === "health") cls = value ? "good" : "bad";
+    else if (mode === "active") cls = value ? "good" : "neutral";
+    else if (mode === "fault") cls = value ? "bad" : "neutral";
+    return '<span class="pill ' + cls + '">' + value + "</span>";
+  }
+  function neutralPill(text) { return '<span class="pill neutral">' + text + "</span>"; }
+
+  const prev = {};               // last rendered text per row key, for change-flashing
+  const NO_FLASH = new Set([     // values that change every tick - flashing them is noise
+    "z.position_mm", "lc.latest_raw",
+    "e.force", "e.position", "e.elapsed", "e.samples",
+  ]);
+
+  // Render label/value rows into a container. `spec` is [key, label, html] tuples.
+  function rows(containerId, spec) {
+    const html = spec.map(function (item) {
+      const key = item[0], label = item[1], value = item[2];
+      const flash = (prev[key] !== undefined && prev[key] !== value && !NO_FLASH.has(key));
+      prev[key] = value;
+      return '<div class="row"><span class="k">' + label + '</span>' +
+             '<span class="v' + (flash ? " flash" : "") + '" data-k="' + key + '">' + value + "</span></div>";
+    }).join("");
+    document.getElementById(containerId).innerHTML = html;
+  }
+
+  function fmt(n, d) { return (n === null || n === undefined) ? "--" : Number(n).toFixed(d); }
+
+  function render(d) {
+    const z = d.zaber, lc = d.load_cell, e = d.engine, live = e.live || {};
+
+    rows("zaber", [
+      ["z.connected", "Connected", pill(z.connected, "health")],
+      ["z.simulated", "Simulated", pill(z.simulated, "info")],
+      ["z.comport", "COM port", z.comport || neutralPill("none")],
+      ["z.position_mm", "Position (mm)", fmt(z.position_mm, 3)],
+      ["z.connection_lost", "Connection lost", pill(z.connection_lost, "fault")],
+      ["z.comms_lost", "Comms lost", pill(z.comms_lost, "fault")],
+      ["z.read_fail_count", "Read fail count", z.read_fail_count],
+      ["z.move_loop_active", "Move loop active", pill(z.move_loop_active, "active")],
+      ["z.stop_requested", "Stop requested", pill(z.stop_requested, "fault")],
+      ["z.pause_requested", "Pause requested", pill(z.pause_requested, "fault")],
+    ]);
+
+    rows("loadcell", [
+      ["lc.kind", "Kind", neutralPill(lc.kind)],
+      ["lc.real_in_use", "Real device in use", pill(lc.real_in_use, "health")],
+      ["lc.lost", "Lost (unplugged)", pill(lc.lost, "fault")],
+      ["lc.latest_raw", "Latest raw", lc.latest_raw === null ? "--" : lc.latest_raw],
+    ]);
+
+    rows("engine", [
+      ["e.is_running", "Thread running", pill(e.is_running, "active")],
+      ["e.status", "Status", neutralPill(live.status)],
+      ["e.run", "Run", live.run],
+      ["e.force", "Force (N)", fmt(live.force, 2)],
+      ["e.position", "Position (mm)", fmt(live.position, 3)],
+      ["e.elapsed", "Elapsed (s)", fmt(live.elapsed, 1)],
+      ["e.samples", "Samples", live.samples],
+      ["e.simulated", "Simulated", pill(live.simulated, "info")],
+      ["e.disconnect", "Disconnect flag", pill(!!live.disconnect, "fault")],
+      ["e.safety_stop", "Safety stop flag", pill(!!live.safety_stop, "fault")],
+      ["e.message", "Message", live.message ? live.message : neutralPill("(none)")],
+    ]);
+
+    const pend = e.pending_runs || [];
+    document.getElementById("pending").innerHTML = pend.length
+      ? pend.map(function (r) {
+          return "<tr><td>" + r.run + "</td><td>" + r.samples + "</td><td>" +
+                 (r.redo_of === null || r.redo_of === undefined ? "-" : r.redo_of) + "</td><td>" +
+                 (r.reason ? r.reason : "-") + "</td></tr>";
+        }).join("")
+      : '<tr><td class="empty" colspan="4">No runs captured yet.</td></tr>';
+
+    document.getElementById("threads").innerHTML =
+      (d.threads || []).map(function (t) { return "<code>" + t + "</code>"; }).join("");
+
+    document.getElementById("raw").textContent = JSON.stringify(d, null, 2);
+    document.getElementById("btime").textContent = d.time;
+  }
+
+  let lastOk = 0;
+  function setConn(ok) {
+    const el = document.getElementById("conn");
+    el.className = "conn " + (ok ? "ok" : "down");
+    document.getElementById("connText").textContent = ok ? "backend live" : "backend unreachable";
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("/api/debug", { cache: "no-store" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const d = await res.json();
+      render(d);
+      lastOk = Date.now();
+      setConn(true);
+    } catch (err) {
+      setConn(false);
+    }
+  }
+
+  // Keep an "updated N.Ns ago" age counter ticking independently of the poll, so a
+  // stalled backend is obvious even between fetches.
+  setInterval(function () {
+    const age = lastOk ? ((Date.now() - lastOk) / 1000) : null;
+    document.getElementById("age").textContent = age === null ? "--" : age.toFixed(1) + "s ago";
+  }, 100);
+
+  poll();
+  setInterval(poll, 250);
+</script>
+</body>
+</html>
