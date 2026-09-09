@@ -398,8 +398,6 @@ class EMAnalysis():
                 ax1.sharex(ax2)
                 plt.tight_layout()
 
-                filename = self.path / f'Raw Signal_Run #{i+1}_CH{j+1}.png'
-                plt.savefig(filename, dpi=300, bbox_inches='tight')
                 plt.close(fig)
 
     def _build_transient_mask(
@@ -795,16 +793,12 @@ class EMAnalysis():
             self.dpressure_dt.append(dpressure_dt_i)
 
             fig.tight_layout()
-            filename = self.path / f'PS curve all CHs number #{i+1}.png'
-            fig.savefig(filename, dpi=300, bbox_inches='tight')
             plt.close(fig)
 
             fig_dcap_dt.suptitle(
                 f'dCAP/dt (and dPressure/dt) vs Time - Run #{i+1}',
                 fontsize=16, fontweight='bold')
             fig_dcap_dt.tight_layout()
-            filename = self.path / f'dCAP_dt all CHs number #{i+1}.png'
-            fig_dcap_dt.savefig(filename, dpi=300, bbox_inches='tight')
             plt.close(fig_dcap_dt)
 
             # ── Excel export ───────────────────────────────────────────────────
@@ -864,8 +858,6 @@ class EMAnalysis():
             axes[i].legend(loc='lower right', fontsize=10)
 
         plt.tight_layout()
-        filename = self.path / 'PS curves all ch per run.png'
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
     def _plot_all_runs_across_chs(self):
@@ -896,8 +888,6 @@ class EMAnalysis():
             axes[j].axis('off')
 
         plt.tight_layout()
-        filename = self.path / 'PS curves all run per CH.png'
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close(fig)
 
     # =========================================================================

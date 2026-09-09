@@ -188,7 +188,6 @@ class SavedTestAnalyzer:
                 "engine_reason": self._em_fallback_reason,
                 "shorted_channels": em_summary.get("shorted_channels", []) if em_summary else [],
                 "em_plots": em_summary.get("plots") if em_summary else None,
-                "em_images": outputs.get("em_images") if isinstance(outputs, dict) else None,
                 "shear_images": outputs.get("shear_images") if isinstance(outputs, dict) else None,
                 "shear_detection": outputs.get("shear_detection") if isinstance(outputs, dict) else None,
                 "shear_result": outputs.get("shear_result") if isinstance(outputs, dict) else None,
@@ -1026,45 +1025,16 @@ class SavedTestAnalyzer:
         }
 
     def _write_em_layout_real(self, channel_stats, report_output, em_summary):
-        # the real engine (em_analysis) has already written the matplotlib SVGs
-        # (PS Curve/ and Raw Signal/Run N/) plus EB_Analysis_Results.xlsx and
-        # eb_analysis_results.pkl into the test folder. Here we just map the paths.
+        # The real engine has already written the tabular result files. The GUI
+        # renders the JSON plot payload directly, so no image paths are needed.
         runs = em_summary.get("runs", 0)
         results_xlsx = self.analysis_folder / "EB_Analysis_Results.xlsx"
         results_pkl = self.analysis_folder / "eb_analysis_results.pkl"
-
-        # Map the generated matplotlib figures to the analysis tabs so the browser
-        # can display the real figures (served via /plot-file). Figures live in
-        # the structured layout: PS Curve/ and Raw Signal/Run N/.
-        ps_by_run = {}
-        for svg in (self.analysis_folder / "PS Curve").glob("PS curve all CHs number #*.svg"):
-            match = re.search(r"number #(\d+)", svg.name)
-            if match:
-                ps_by_run[str(int(match.group(1)))] = str(svg)
-        raw_by_run = {}
-        for svg in (self.analysis_folder / "Raw Signal").rglob("Raw Signal_Run #*_CH*.svg"):
-            match = re.search(r"Run #(\d+)_CH(\d+)", svg.name)
-            if match:
-                run_no, channel_no = match.group(1), int(match.group(2))
-                raw_by_run.setdefault(str(int(run_no)), []).append((channel_no, str(svg)))
-        raw_images = {run: [path for _, path in sorted(items)] for run, items in raw_by_run.items()}
-
-        em_images = {
-            "ps_curve": ps_by_run,
-            "raw_signal": raw_images,
-            "all_ch_per_run": str(self.analysis_folder / "PS curves all ch per run.svg"),
-            "all_run_per_ch": str(self.analysis_folder / "PS curves all run per CH.svg"),
-        }
 
         return {
             "engine": "real",
             "runs": runs,
             "shorted_channels": em_summary.get("shorted_channels", []),
-            "em_images": em_images,
-            "raw_signal_plots": sorted(p for items in raw_by_run.values() for _, p in items),
-            "ps_curve_plots": sorted(ps_by_run.values()),
-            "ps_curves_all_ch_per_run": str(self.analysis_folder / "PS curves all ch per run.svg"),
-            "ps_curves_all_run_per_ch": str(self.analysis_folder / "PS curves all run per CH.svg"),
             "results_table": str(results_xlsx),
             "results_workbook": str(results_xlsx),
             "results_archive": str(results_pkl),

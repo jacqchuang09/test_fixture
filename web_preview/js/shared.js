@@ -98,6 +98,9 @@
       // CAP files): list of {channel, ps, kpa, cap, inf} with mean/std/cov/min/max.
       // Used by the Summary Statistics table instead of the synthesized preview.
       let emBackendChannelStats = null;
+      // Shorted channels detected by the real Python EM pipeline. Null means the
+      // GUI is showing preview data and must use its fallback heuristic.
+      let emBackendShortedChannels = null;
       // shear report state (shorted channels + pass/fail) for the Shear Report Output.
       let shearReportShorted = "None";
       let shearReportResult = "Pass";

@@ -962,12 +962,6 @@
         if (!target) return;
         document.getElementById("emByChannelButton")?.classList.toggle("active", emAllChRunsMode === "channel");
         document.getElementById("emByRunButton")?.classList.toggle("active", emAllChRunsMode === "run");
-        if (emImages) {
-          const path = emAllChRunsMode === "run" ? emImages.all_ch_per_run : emImages.all_run_per_ch;
-          const label = emAllChRunsMode === "run" ? "PS curves - all channels per run" : "PS curves - all runs per channel";
-          target.innerHTML = `<div class="em-analysis-png-wrap">${emPngImg(path, label)}</div>`;
-          return;
-        }
         target.innerHTML = emPressureCurveSvg(readings, emAllChRunsMode);
       }
 
@@ -984,11 +978,6 @@
         runs.forEach((run) => {
           document.getElementById(`emRawRun${run}Button`)?.classList.toggle("active", emRawSignalRun === run);
         });
-        if (emImages && emImages.raw_signal) {
-          const imgs = emImages.raw_signal[String(emRawSignalRun)] || [];
-          target.innerHTML = `<div class="em-analysis-png-grid">${imgs.map((p, i) => emPngImg(p, `Raw signal run ${emRawSignalRun} CH${i + 1}`)).join("")}</div>`;
-          return;
-        }
         target.innerHTML = emRawSignalsSvg(readings, emRawSignalRun);
       }
 
@@ -1006,13 +995,6 @@
         runs.forEach((run) => {
           document.getElementById(`emPsRun${run}Button`)?.classList.toggle("active", emPressureSensitivityRun === run);
         });
-        if (emImages && emImages.ps_curve) {
-          const path = emImages.ps_curve[String(emPressureSensitivityRun)];
-          if (path) {
-            target.innerHTML = `<div class="em-analysis-png-wrap">${emPngImg(path, `PS curve all CHs run ${emPressureSensitivityRun}`)}</div>`;
-            return;
-          }
-        }
         target.innerHTML = emPressureSensitivitySvg(readings, emPressureSensitivityRun);
       }
 
@@ -1057,7 +1039,11 @@
         const sortedCaps = channels.map((channel, index) => ({ channel, value: channelMaxCaps[index] })).sort((a, b) => b.value - a.value);
         const top6 = sortedCaps.slice(0, 6).map((item) => item.value);
         const top2 = sortedCaps.slice(0, 2).map((item) => item.value);
-        const shortedChannels = sortedCaps.filter((item) => item.value > summaryStats(channelMaxCaps).average + summaryStats(channelMaxCaps).standardDeviation * 1.2).map((item) => `CH ${item.channel}`);
+        const shortedChannels = Array.isArray(emBackendShortedChannels)
+          ? emBackendShortedChannels.map((channel) => `CH ${channel}`)
+          : sortedCaps
+              .filter((item) => item.value > summaryStats(channelMaxCaps).average + summaryStats(channelMaxCaps).standardDeviation * 1.2)
+              .map((item) => `CH ${item.channel}`);
 
         const maxPsStats = summaryStats(runMaxPs);
         const psAtInflectionStats = summaryStats(inflectionPs);
@@ -1344,13 +1330,15 @@
         const avg = (items) => items.reduce((sum, value) => sum + value, 0) / Math.max(1, items.length);
         const avgCov = (metric, indexes) => `${sig3(avg(indexes.map((index) => channelMetrics[index][metric])))}%`;
         const compressionShortThresholdPf = 1000000;
-        const shorted = channels
-          .map((channel) => ({
-            channel,
-            maxCap: Math.max(...readings.map((point) => emChannelValue(point, channel)), 0),
-          }))
-          .filter((item) => item.maxCap >= compressionShortThresholdPf)
-          .map((item) => `CH${item.channel}`);
+        const shorted = Array.isArray(emBackendShortedChannels)
+          ? emBackendShortedChannels.map((channel) => `CH${channel}`)
+          : channels
+              .map((channel) => ({
+                channel,
+                maxCap: Math.max(...readings.map((point) => emChannelValue(point, channel)), 0),
+              }))
+              .filter((item) => item.maxCap >= compressionShortThresholdPf)
+              .map((item) => `CH${item.channel}`);
         const pressureIndexes = [0, 1, 2, 3, 4, 5, 6, 7, 8];
         const runCounted = runs.length;
         const redoAttemptCount = config().redo_run ? 1 : 0;
@@ -1459,12 +1447,13 @@
             banner.textContent = "";
           }
         }
-        // adopt the real matplotlib PNG figures when present (preferred display).
-        emImages = (analysis && analysis.em_images) ? analysis.em_images : null;
         // adopt the real per-channel stats (from the CAP files) for the Summary
         // Statistics table; null falls the table back to the synthesized preview.
         emBackendChannelStats = (analysis && Array.isArray(analysis.channel_stats) && analysis.channel_stats.length)
           ? analysis.channel_stats : null;
+        emBackendShortedChannels = (analysis && Array.isArray(analysis.shorted_channels))
+          ? analysis.shorted_channels.map(Number).filter(Number.isInteger)
+          : null;
         // embed the interactive (zoom + click-to-comment) plots in the Interactive tab.
         renderInteractivePanel("em", analysis);
         const runs = [...new Set(readings.map((point) => point.run))].sort((a, b) => a - b);
