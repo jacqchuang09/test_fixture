@@ -87,7 +87,3 @@ then the browser reached Python, but the FUTEK runtime is not ready yet. Install
 5. The Zaber Control Stage popup opens.
 6. Click Start to check the backend and begin the hardware path.
 7. Use Pause or Stop if needed.
-
-## Project cleanup
-
-The working app is intentionally small now. Files that are not part of the current browser workflow were moved into `archive/` instead of deleted, so they are still available if we need to copy logic back later.
