@@ -1,6 +1,6 @@
 # Zaber Browser GUI
 
-This folder is the current working version of the Zaber/FUTEK testing interface. The main app is a browser page, but it is still connected to Python through a small local backend.
+This folder is the current working version of the Zaber/FUTEK testing interface. Reference the Install & Launch Guide https://docs.google.com/document/d/1RJJx2jMUhhXh7YFNoOQ6MpZyVmPvnl0KqJy4FgH75OA/edit?usp=sharing.
 
 ## What to open
 
