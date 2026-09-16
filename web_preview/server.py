@@ -414,7 +414,7 @@ class Handler(SimpleHTTPRequestHandler):
         # example: google drive / sensor id / 05 26 26_325mm2_em.
         selected = (payload.get("selected_test_folder") or "").strip()
         if selected:
-            return Path(selected).expanduser()
+            return self.windows_long_path(Path(selected).expanduser())
 
         save_folder = self.clean_base_save_folder(Path(payload.get("save_folder") or "").expanduser())
         base_save_folder = self.clean_base_save_folder(Path(payload.get("base_save_folder") or save_folder).expanduser())
@@ -422,6 +422,21 @@ class Handler(SimpleHTTPRequestHandler):
         if not sensor_id:
             return save_folder
         return base_save_folder / sensor_id / self.test_folder_name(payload)
+
+    def windows_long_path(self, folder):
+        # Windows legacy APIs reject paths at 260 characters. The extended-length
+        # prefix lets Python file operations address selected folders beyond that
+        # limit without changing the path shown to the operator.
+        if sys.platform != "win32":
+            return folder
+        path_text = str(folder)
+        if path_text.startswith("\\\\?\\") or len(path_text) < 200:
+            return folder
+        if path_text.startswith("\\\\"):
+            return Path("\\\\?\\UNC\\" + path_text[2:])
+        if len(path_text) >= 3 and path_text[1:3] == ":\\":
+            return Path("\\\\?\\" + path_text)
+        return folder
 
     def clean_base_save_folder(self, folder):
         # old preview states sometimes stored a resolved sensor/test folder as the visible base.
@@ -787,11 +802,32 @@ class Handler(SimpleHTTPRequestHandler):
 
     def browse_folder(self):
         # open a native folder picker. In the packaged desktop app this uses the
-        # pywebview dialog (works on Windows and Mac); the browser-only launcher
-        # falls back to macOS osascript.
+        # pywebview dialog (works on Windows and Mac); browser-only launchers
+        # use the platform's available native picker.
         if config.DESKTOP_WINDOW is not None:
             return self.browse_folder_pywebview()
+        if sys.platform == "win32":
+            return self.browse_folder_tkinter()
         return self.browse_folder_osascript()
+
+    def browse_folder_tkinter(self):
+        # The browser launcher has no pywebview window, so use a local Windows
+        # dialog instead of treating the selection as cancelled.
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected = filedialog.askdirectory(title="Select a test folder")
+            root.destroy()
+        except Exception as exc:
+            return False, f"Could not open folder picker: {exc}"
+
+        if not selected:
+            return False, "Folder selection cancelled."
+        return True, selected
 
     def browse_folder_pywebview(self):
         import webview
