@@ -49,6 +49,8 @@ SIM_STIFFNESS_N_MM = 9.0
 # uses a moderate speed; sim is faster so a handful of demo cycles finish quickly.
 REAL_CYC_DESCEND_MM_S = 1.0
 REAL_CYC_ASCEND_MM_S = 1.0
+REAL_TRIANGLE_CALIB_MM_S = 0.1
+REAL_TRIANGLE_MAX_MM_S = 0.7
 SIM_CYC_DESCEND_MM_S = 4.0
 SIM_CYC_ASCEND_MM_S = 4.0
 # how many of the most recent 100 Hz samples the live waveform shows (~10 s).
@@ -95,6 +97,10 @@ class ZaberDisconnect(Exception):
 
 class FutekDisconnect(Exception):
     """Raised inside a run loop when the live FUTEK load cell stops responding mid-run."""
+
+
+class TriangleTravelLimit(Exception):
+    """Raised when a calibrated triangle run reaches the actuator travel limit."""
 
 
 # --- Single-owner load cell reader -------------------------------------------
@@ -1256,6 +1262,8 @@ class RunEngine:
         # bounds at the configured frequency, for N cycles. In simulation the
         # recorded force IS the target waveform (a clean sine); on the real rig the
         # actuator position is driven to track the waveform while the FUTEK is read.
+        # Real Triangle runs instead calibrate the force bounds, then reverse at a
+        # fixed velocity while the J-Link captures synchronized CAP/IMU readings.
         axis = STATE.axis
         print("[fatigue] starting fatigue (cyclical) run - opening the load cell now")
         if axis is None:
@@ -1277,6 +1285,10 @@ class RunEngine:
         total_cycles = max(1, int(params.get("cycle_count", 1)))
         frequency = max(0.01, float(params.get("frequency", 1.0)))
         waveform = str(params.get("waveform", "Sine")).lower()
+        triangle_mode = waveform.startswith("triangle")
+        if triangle_mode and not 0.0 < lower < upper < FORCE_CEILING_N:
+            self._set(status="error", message="Triangle fatigue requires 0 N < lower force < upper force < 33 N.")
+            return
         period = 1.0 / frequency
         total_time = total_cycles * period
 
@@ -1304,8 +1316,12 @@ class RunEngine:
             # one full cycle per period: starts at the lower bound, peaks at upper.
             return lower + (upper - lower) * cyclical_shape((t * frequency) % 1.0)
 
-        self._set(status="running", run=0, cycle=0, total_cycles=total_cycles,
-                  simulated=simulated, force=0.0, samples=0, message="", position=HOME_MM,
+        waiting_for_jlink = triangle_mode and real_run
+        self._set(status="waiting" if waiting_for_jlink else "running",
+                  run=0, cycle=0, total_cycles=total_cycles,
+                  simulated=simulated, force=0.0, samples=0,
+                  message="connecting to J-Link and preparing Triangle test" if waiting_for_jlink else "",
+                  position=HOME_MM,
                   trace=[], disconnect=False, safety_stop=False)
 
         readings = []   # (index, force_N, time_s, cycle)
@@ -1313,6 +1329,12 @@ class RunEngine:
         t0 = time.time()
         idx = 0
         prev_force = None
+        jlink_capture = None
+        jlink_readings = None
+        triangle_velocity = None
+        triangle_depth_range = None
+        triangle_reversals = 0
+        motion_started = False
         # A spike means the force jumped FAR more than this waveform can legitimately
         # command in one 100 Hz step. The biggest legitimate step is the full
         # lower->upper swing (a square wave's edge), so allow that plus a noise margin.
@@ -1321,18 +1343,40 @@ class RunEngine:
         # load-cell noise, and on the actuator's discrete catch-up moves.
         spike_threshold = max(SPIKE_FLOOR_N, abs(upper - lower) + 5.0)
 
-        def record(force_value, cycle):
+        def finish_jlink_capture():
+            nonlocal jlink_capture
+            if jlink_capture is None:
+                return None
+            capture = jlink_capture
+            values = capture.stop()
+            jlink_capture = None
+            return values
+
+        def check_triangle_connections():
+            if STATE.comms_lost:
+                raise ZaberDisconnect()
+            if force_futek is not None and force_futek.lost():
+                raise FutekDisconnect()
+            if jlink_capture is not None:
+                jlink_capture.raise_if_failed()
+
+        def record(force_value, cycle, position_mm=None, loading=None):
             nonlocal idx, prev_force
             if STATE.comms_lost:
                 raise ZaberDisconnect()
             if force_futek is not None and force_futek.lost():
                 raise FutekDisconnect()
+            if jlink_capture is not None:
+                jlink_capture.raise_if_failed()
             if (prev_force is not None and abs(force_value - prev_force) > spike_threshold) or force_value > FORCE_CEILING_N:
                 raise ForceSpikeStop()
             prev_force = force_value
             t = idx * SAMPLE_DT if simulated else (time.time() - t0)
             idx += 1
-            readings.append((idx, force_value, t, cycle))
+            reading = [idx, force_value, t, cycle]
+            if position_mm is not None:
+                reading.extend((position_mm, bool(loading)))
+            readings.append(tuple(reading))
             trace.append([round(t, 4), round(force_value, 4)])
             if len(trace) > CYC_TRACE_WINDOW:
                 del trace[0:len(trace) - CYC_TRACE_WINDOW]
@@ -1348,8 +1392,23 @@ class RunEngine:
             Units = _Units
 
         try:
+            if triangle_mode and real_run:
+                from jlink import JLinkCapture
+                jlink_capture = JLinkCapture()
+                try:
+                    t0 = jlink_capture.start(timeout=10)
+                except Exception as exc:
+                    raise RuntimeError(f"Could not start J-Link RTT capture: {exc}") from exc
+                self._set(status="running", message="J-Link ready; calibrating Triangle force bounds.")
+
+            if STATE.stop_requested:
+                self._set(status="stopped", position=HOME_MM,
+                          message="Fatigue test stopped before motion.")
+                return
+
             # approach the sensor (same force-monitored gap move as the EM press).
             STATE._move_loop_active = True   # this loop owns the serial port now
+            motion_started = True
             self._home(axis)             # start every press from the 17 mm baseline
             self._approach_move(axis)
             start_pos = STATE.position_mm
@@ -1359,7 +1418,96 @@ class RunEngine:
             deep_depth = SIM_FREE_GAP_MM + self._inverse_press(max(0.0, upper))
             cal_init = 0.0
 
-            if real_run:
+            if triangle_mode and real_run:
+                # Calibrate both force bounds at a slow, constant speed, then return
+                # to the lower bound before starting the fixed-velocity cycles.
+                if not STATE.stop_requested:
+                    axis.move_velocity(REAL_TRIANGLE_CALIB_MM_S,
+                                       Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                init_force = None
+                previous_stage = None
+                got_shallow = None
+                got_deep = None
+                shallow_position = None
+                deep_position = None
+                while not STATE.stop_requested:
+                    check_triangle_connections()
+                    STATE._read_position()
+                    if self._at_travel_limit():
+                        raise TriangleTravelLimit()
+                    depth = max(0.0, STATE.position_mm - start_pos)
+                    force = self._read_force(force_futek, depth)
+                    if init_force is None:
+                        init_force = force
+                    stage_force = abs(force - init_force)
+                    if ((previous_stage is not None and
+                         abs(stage_force - previous_stage) >
+                         self._spike_limit(REAL_TRIANGLE_CALIB_MM_S * SAMPLE_DT)) or
+                            stage_force > FORCE_CEILING_N):
+                        raise ForceSpikeStop()
+                    previous_stage = stage_force
+                    if got_shallow is None and stage_force >= lower:
+                        got_shallow = stage_force
+                        shallow_position = STATE.position_mm
+                    if stage_force >= upper:
+                        got_deep = stage_force
+                        deep_position = STATE.position_mm
+                        break
+                    time.sleep(SAMPLE_DT)
+
+                self._stop_axis(axis)
+                if STATE.stop_requested:
+                    pass
+                elif got_deep is None or got_shallow is None:
+                    raise RuntimeError("Triangle calibration did not reach both force bounds.")
+                else:
+                    if shallow_position is None or deep_position is None:
+                        raise RuntimeError("Triangle calibration did not record both actuator positions.")
+                    cal_init = init_force or 0.0
+                    triangle_depth_range = abs(deep_position - shallow_position)
+                    if triangle_depth_range <= 0:
+                        raise RuntimeError("Triangle calibration produced no measurable depth range.")
+                    triangle_velocity = 2.0 * triangle_depth_range * frequency
+                    if triangle_velocity > REAL_TRIANGLE_MAX_MM_S:
+                        raise RuntimeError(
+                            f"Triangle requires {triangle_velocity:.3f} mm/s, above the "
+                            f"{REAL_TRIANGLE_MAX_MM_S:.3f} mm/s limit. Lower the frequency "
+                            "or force range."
+                        )
+
+                    # The calibration ends at the upper bound. Retract slowly to
+                    # the lower bound so the first cycle starts in the loading direction.
+                    axis.move_velocity(-REAL_TRIANGLE_CALIB_MM_S,
+                                       Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                    previous_stage = None
+                    reached_lower = False
+                    while not STATE.stop_requested:
+                        check_triangle_connections()
+                        STATE._read_position()
+                        if self._at_travel_limit():
+                            raise TriangleTravelLimit()
+                        depth = max(0.0, STATE.position_mm - start_pos)
+                        force = self._read_force(force_futek, depth)
+                        stage_force = abs(force - cal_init)
+                        if ((previous_stage is not None and
+                             abs(stage_force - previous_stage) >
+                             self._spike_limit(REAL_TRIANGLE_CALIB_MM_S * SAMPLE_DT)) or
+                                stage_force > FORCE_CEILING_N):
+                            raise ForceSpikeStop()
+                        previous_stage = stage_force
+                        if stage_force <= lower:
+                            reached_lower = True
+                            break
+                        time.sleep(SAMPLE_DT)
+                    self._stop_axis(axis)
+                    if not STATE.stop_requested and not reached_lower:
+                        raise RuntimeError("Triangle calibration could not return to the lower force bound.")
+
+                    if not STATE.stop_requested:
+                        axis.move_velocity(triangle_velocity,
+                                           Units.VELOCITY_MILLIMETRES_PER_SECOND)
+
+            elif real_run:
                 # calibrate the real depth range: slow press to the upper force,
                 # capturing the depth at the lower and upper bounds.
                 try:
@@ -1406,35 +1554,83 @@ class RunEngine:
                     deep_depth = got_deep
                 shallow_depth = got_shallow if got_shallow is not None else max(0.0, deep_depth - 1.0)
 
-            # generate the waveform for the full duration, sampled at 100 Hz and
-            # paced in real time so the live graph scrolls smoothly.
-            while not STATE.stop_requested:
-                t = idx * SAMPLE_DT
-                if t >= total_time:
-                    break
-                f_t = target_force(t)
-                cycle = min(total_cycles, int(t * frequency) + 1)
-                if simulated:
-                    # the recorded force IS the target -> an exact sine/square.
-                    STATE.position_mm = start_pos + (SIM_FREE_GAP_MM + self._inverse_press(max(0.0, f_t)))
-                    record(f_t, cycle)
-                else:
-                    # drive the actuator position to track the target waveform.
-                    span = (upper - lower) or 1.0
-                    frac = max(0.0, min(1.0, (f_t - lower) / span))
-                    target_depth = shallow_depth + frac * (deep_depth - shallow_depth)
-                    try:
-                        axis.move_absolute(start_pos + target_depth, _mm_unit(), wait_until_idle=False)
-                    except Exception:
-                        pass
+            if triangle_mode and real_run and not STATE.stop_requested:
+                # Reverse at the force thresholds using the velocity derived from the
+                # calibrated depth range. One cycle is one upper and one lower crossing.
+                if triangle_velocity is None:
+                    raise RuntimeError("Triangle calibration did not produce a cycle velocity.")
+                previous_stage = None
+                loading = True
+                reversal_limit = total_cycles * 2
+                next_tick = time.monotonic()
+                triangle_spike_limit = max(
+                    SPIKE_FLOOR_N,
+                    SPIKE_STIFFNESS_N_PER_MM * triangle_velocity * SAMPLE_DT,
+                )
+                triangle_ceiling = min(FORCE_CEILING_N, upper + 5.0)
+                while not STATE.stop_requested and triangle_reversals < reversal_limit:
+                    check_triangle_connections()
+                    now = time.monotonic()
+                    if now < next_tick:
+                        time.sleep(next_tick - now)
+                        continue
                     STATE._read_position()
-                    d = max(0.0, STATE.position_mm - start_pos)
-                    # tare then magnitude (either cell polarity), matching the
-                    # calibration press above - a signed value from a negative-going
-                    # cell records negative force and disarms the ceiling guard.
-                    record(abs(self._read_force(force_futek, d) - cal_init), cycle)
-                self._set(cycle=cycle)
-                time.sleep(SAMPLE_DT)
+                    if self._at_travel_limit():
+                        raise TriangleTravelLimit()
+                    depth = max(0.0, STATE.position_mm - start_pos)
+                    force = abs(self._read_force(force_futek, depth) - cal_init)
+                    if (force > triangle_ceiling or
+                            (previous_stage is not None and
+                             abs(force - previous_stage) > triangle_spike_limit)):
+                        raise ForceSpikeStop()
+                    previous_stage = force
+
+                    if loading and force >= upper:
+                        loading = False
+                        triangle_reversals += 1
+                        if triangle_reversals < reversal_limit:
+                            axis.move_velocity(-triangle_velocity,
+                                               Units.VELOCITY_MILLIMETRES_PER_SECOND)
+                    elif not loading and force <= lower:
+                        loading = True
+                        triangle_reversals += 1
+                        if triangle_reversals < reversal_limit:
+                            axis.move_velocity(triangle_velocity,
+                                               Units.VELOCITY_MILLIMETRES_PER_SECOND)
+
+                    cycle = min(total_cycles, max(1, (triangle_reversals + 1) // 2))
+                    record(force, cycle, STATE.position_mm, loading)
+                    self._set(cycle=cycle)
+                    next_tick += SAMPLE_DT
+            else:
+                # Generate the waveform for the full duration, sampled at 100 Hz and
+                # paced in real time so the live graph scrolls smoothly.
+                while not STATE.stop_requested:
+                    t = idx * SAMPLE_DT
+                    if t >= total_time:
+                        break
+                    f_t = target_force(t)
+                    cycle = min(total_cycles, int(t * frequency) + 1)
+                    if simulated:
+                        # The recorded force is the target, an exact preview waveform.
+                        STATE.position_mm = start_pos + (SIM_FREE_GAP_MM + self._inverse_press(max(0.0, f_t)))
+                        record(f_t, cycle)
+                    else:
+                        # Drive the actuator position to track the target waveform.
+                        span = (upper - lower) or 1.0
+                        frac = max(0.0, min(1.0, (f_t - lower) / span))
+                        target_depth = shallow_depth + frac * (deep_depth - shallow_depth)
+                        try:
+                            axis.move_absolute(start_pos + target_depth, _mm_unit(), wait_until_idle=False)
+                        except Exception:
+                            pass
+                        STATE._read_position()
+                        d = max(0.0, STATE.position_mm - start_pos)
+                        # Tare then magnitude (either cell polarity), matching the
+                        # calibration press above.
+                        record(abs(self._read_force(force_futek, d) - cal_init), cycle)
+                    self._set(cycle=cycle)
+                    time.sleep(SAMPLE_DT)
 
             if STATE.stop_requested:
                 # Stop was pressed: halt the actuator in place RIGHT NOW so it stops
@@ -1449,11 +1645,14 @@ class RunEngine:
                 # while the actuator homes.
                 self._set(status="stopping", message="stopping - actuator halted, returning to home...")
             self._home(axis)
-            self._write_cyclical(test_folder, readings)
+            jlink_readings = finish_jlink_capture()
+            self._write_cyclical(test_folder, readings, jlink_readings)
             self._write_cyclical_graph(test_folder, readings)
-            done_cycles = readings[-1][3] if readings else 0
+            done_cycles = (min(total_cycles, triangle_reversals // 2)
+                           if triangle_mode and real_run
+                           else (readings[-1][3] if readings else 0))
             forces = [r[1] for r in readings]
-            self._write_cyclical_stats(test_folder, {
+            stats = {
                 "Waveform": params.get("waveform", "Sine"),
                 "Frequency (Hz)": frequency,
                 "Lower Bound (N)": lower,
@@ -1465,19 +1664,41 @@ class RunEngine:
                 "Mean Force (N)": round(sum(forces) / len(forces), 4) if forces else 0.0,
                 "Duration (s)": round(readings[-1][2], 3) if readings else 0.0,
                 "Samples": len(readings),
-            })
+            }
+            if (triangle_mode and real_run and triangle_depth_range is not None and
+                    triangle_velocity is not None):
+                duration = (readings[-1][2] - readings[0][2]) if len(readings) > 1 else 0.0
+                stats.update({
+                    "Calibrated Depth Range (mm)": round(triangle_depth_range, 5),
+                    "Velocity Setpoint (mm/s)": round(triangle_velocity, 5),
+                    "Achieved Frequency (Hz)": round(done_cycles / duration, 5) if duration > 0 else 0.0,
+                    "J-Link Complete Records": len(jlink_readings),
+                })
+            self._write_cyclical_stats(test_folder, stats)
             if STATE.stop_requested:
+                message = f"Fatigue test stopped after {done_cycles} cycle(s)."
+                if jlink_readings is not None and not jlink_readings:
+                    message += " No complete J-Link records were captured."
                 self._set(status="stopped", position=HOME_MM, trace=list(trace),
-                          message=f"Fatigue test stopped after {done_cycles} cycle(s).")
+                          message=message)
             else:
+                message = f"Fatigue test complete - {total_cycles} cycle(s)."
+                if jlink_readings is not None and not jlink_readings:
+                    message += " No complete J-Link records were captured."
                 self._set(status="completed", position=HOME_MM, trace=list(trace),
-                          message=f"Fatigue test complete - {total_cycles} cycle(s).")
+                          message=message)
         except ForceSpikeStop:
             self._stop_axis(axis)
             self._home(axis)
             self._write_cyclical_graph(test_folder, readings)
             self._set(status="error", safety_stop=True, position=HOME_MM,
                       message="Force spike detected. Fatigue test stopped for safety.")
+        except TriangleTravelLimit:
+            self._stop_axis(axis)
+            self._home(axis)
+            self._write_cyclical_graph(test_folder, readings)
+            self._set(status="error", safety_stop=True, position=HOME_MM,
+                      message="Actuator reached its travel limit. Triangle fatigue stopped for safety.")
         except ZaberDisconnect:
             self._zaber_disconnect_safe_state()
         except FutekDisconnect:
@@ -1485,14 +1706,23 @@ class RunEngine:
             # Surfaced before the home so the dialog pops the instant the cell drops.
             self._loadcell_lost_home(axis, "Load cell disconnected during the fatigue test. Run invalidated.")
         except Exception as exc:
+            if triangle_mode and motion_started:
+                self._stop_axis(axis)
+                if not STATE.comms_lost:
+                    self._home(axis)
             self._set(status="error", message=f"Fatigue test failed: {exc}")
         finally:
+            if jlink_capture is not None:
+                try:
+                    finish_jlink_capture()
+                except Exception as exc:
+                    print(f"[fatigue] J-Link cleanup failed: {exc}")
             STATE._move_loop_active = False   # release the serial port
             # the cached FUTEK stays open between operations (reopening it costs many
             # seconds); it is only dropped on a read failure / disconnect.
 
-    def _write_cyclical(self, test_folder, readings):
-        # save the full per-sample fatigue stream (Index, Load Cell, Time, Cycle).
+    def _write_cyclical(self, test_folder, readings, jlink_readings=None):
+        # Save force data and, for real Triangle runs, synchronized J-Link data in one workbook.
         test_dir = Path(test_folder)
         test_dir.mkdir(parents=True, exist_ok=True)
         path = test_dir / "Fatigue_Data.xlsx"
@@ -1500,16 +1730,39 @@ class RunEngine:
             import xlsxwriter
             workbook = xlsxwriter.Workbook(str(path))
             worksheet = workbook.add_worksheet("Fatigue")
-            for col, head in enumerate(("Index", "Load Cell", "Time", "Cycle")):
+            headers = ["Index", "Load Cell", "Time", "Cycle"]
+            if readings and len(readings[0]) > 4:
+                headers.extend(("Actual Position (mm)", "Direction (True=loading/up)"))
+            for col, head in enumerate(headers):
                 worksheet.write(0, col, head)
-            for row, (index, force, t, cycle) in enumerate(readings, start=1):
+            for row, reading in enumerate(readings, start=1):
+                index, force, t, cycle = reading[:4]
                 worksheet.write(row, 0, index)
                 worksheet.write(row, 1, force)
                 worksheet.write(row, 2, t)
                 worksheet.write(row, 3, cycle)
+                if len(reading) > 4:
+                    worksheet.write(row, 4, reading[4])
+                    worksheet.write(row, 5, reading[5])
+            if jlink_readings is not None:
+                jlink_sheet = workbook.add_worksheet("J-Link")
+                jlink_headers = (["Time (s)", "Device Time"] +
+                                 [f"CAP{i}(pF)" for i in range(1, 17)] +
+                                 ["ACCX(g)", "ACCY(g)", "ACCZ(g)"])
+                for col, head in enumerate(jlink_headers):
+                    jlink_sheet.write(0, col, head)
+                for row, entry in enumerate(jlink_readings, start=1):
+                    jlink_sheet.write(row, 0, entry.get("TIME", ""))
+                    jlink_sheet.write(row, 1, entry.get("DEVICE_TIME", ""))
+                    for channel in range(1, 17):
+                        jlink_sheet.write(row, channel + 1, entry.get(f"CAP{channel}", ""))
+                    for col, key in enumerate(("ACCX", "ACCY", "ACCZ"), start=18):
+                        jlink_sheet.write(row, col, entry.get(key, ""))
             workbook.close()
             return path
-        except Exception:
+        except Exception as exc:
+            if jlink_readings is not None:
+                raise RuntimeError(f"Could not save the combined fatigue and J-Link workbook: {exc}") from exc
             import csv
             path = test_dir / "Fatigue_Data.csv"
             with path.open("w", newline="", encoding="utf-8") as handle:
