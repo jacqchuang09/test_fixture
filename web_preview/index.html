@@ -504,11 +504,12 @@
               <label>
                 <span class="sensor-header">
                   <span class="label-text">Waveform Type</span>
-                  <span class="sensor-help" tabindex="0" data-tooltip="Choose the force waveform used to cycle the actuator between the lower and upper force bounds. Sine is a smooth press/release. Square holds at each bound.">i</span>
+                  <span class="sensor-help" tabindex="0" data-tooltip="Choose the force waveform used to cycle between the force bounds. Triangle calibrates the bounds, then uses fixed-velocity force-threshold reversals and requires a J-Link connection to capture CAP/IMU data.">i</span>
                 </span>
                 <select id="waveformType">
                   <option value="Sine" selected>Sine</option>
                   <option value="Square">Square</option>
+                  <option value="Triangle">Triangle</option>
                 </select>
               </label>
 

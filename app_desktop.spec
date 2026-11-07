@@ -5,6 +5,7 @@
 import sys
 import os
 import glob
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
@@ -38,6 +39,12 @@ if sys.platform.startswith("win"):
     ):
         binaries.append((f"libs/windows/{dll}", "."))
 
+# J-Link RTT loads its native DLLs dynamically, so collect the pylink package's
+# data and binaries as well as its Python modules for Triangle fatigue runs.
+pylink_datas, pylink_binaries, pylink_hiddenimports = collect_all("pylink")
+datas += pylink_datas
+binaries += pylink_binaries
+
 # zaber-motion is a thin Python wrapper over a native core library it loads at
 # import time. The loader (zaber_motion/bindings.py) looks for the library at:
 #     <zaber_motion>/../zaber_motion_bindings/zaber-motion-core-<os>-<arch>.<ext>
@@ -65,6 +72,7 @@ a = Analysis(
     datas=datas,
     hiddenimports=[
         "run_web_gui", "config", "hardware", "analysis", "server", "run_engine", "run_log", "futek_cli",
+        "jlink", "pylink", "pylink.enums",
         "em_analysis", "shear_analysis", "manual_analysis", "plot_style",
         # matplotlib picks the SVG writer dynamically from savefig(format="svg"),
         # so PyInstaller's static scan misses it - bundle the backend explicitly.
@@ -79,7 +87,7 @@ a = Analysis(
         "em_analysis",
         "numpy", "pandas", "scipy", "scipy.signal", "scipy.ndimage",
         "matplotlib", "openpyxl",
-    ] + zaber_hiddenimports,
+    ] + zaber_hiddenimports + pylink_hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=[],
